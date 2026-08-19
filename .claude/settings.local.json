@@ -3,7 +3,10 @@
     "allow": [
       "Bash(gh --version)",
       "Bash(gh auth *)",
-      "PowerShell(winget install --id GitHub.cli -e)"
+      "PowerShell(winget install --id GitHub.cli -e)",
+      "Bash(git ls-remote *)",
+      "Bash(curl -s https://api.github.com/repos/adityab-stack/Simulator-Dashboard)",
+      "Bash(python -c ' *)"
     ]
   }
 }

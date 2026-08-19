@@ -1,0 +1,44 @@
+name: Refresh Dashboard Data
+
+# Runs automatically every day at 10:00 AM IST, and can also be triggered
+# manually from the Actions tab (Run workflow button) whenever you want an
+# on-demand refresh.
+on:
+  schedule:
+    - cron: '30 4 * * *'   # 04:30 UTC = 10:00 AM IST
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed so this workflow can commit the refreshed data.json back
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install openpyxl google-api-python-client google-auth
+
+      - name: Write service account credentials
+        run: echo '${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}' > service_account.json
+
+      - name: Rebuild data.json from the live Google Sheet
+        run: python build_data.py
+
+      - name: Remove credentials before committing
+        run: rm -f service_account.json
+
+      - name: Commit and push data.json if it changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/data.json
+          git diff --staged --quiet || git commit -m "Automated data refresh $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push

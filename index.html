@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Snitch — Simulator and Tracker</title>
+<title>Snitch — Plan vs Actual</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -60,6 +60,8 @@
                      display:flex; align-items:center; gap:10px; margin-bottom:12px; }
   .card-section h2 .rule{ flex:1; height:1px; background:var(--line); }
   .card-section h2 .count{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--text-faint); font-weight:400; }
+  .sort-select{ margin-left:12px; background:var(--panel-2); border:1px solid var(--line); color:var(--text-dim);
+                font-family:'IBM Plex Mono', monospace; font-size:11px; padding:4px 8px; border-radius:5px; cursor:pointer; }
 
   .pivot-strip{ display:flex; gap:14px; overflow-x:auto; padding-bottom:10px; }
   .pivot-block{ background:var(--panel); border:1px solid var(--line); border-radius:10px;
@@ -76,6 +78,20 @@
               text-align:right; color:var(--text-dim); border-bottom:1px solid #1B2019; white-space:nowrap; }
   .ptable td.rowlabel{ text-align:left; font-family:'Inter'; font-weight:500; color:var(--text); }
   .ptable td.dash{ color:var(--text-faint); }
+  .ptable td.delta-behind{ color:var(--red); }
+  .ptable td.delta-ahead{ color:var(--green); }
+  .sortable-th{ cursor:pointer; user-select:none; }
+  .sortable-th:hover{ color:var(--amber); }
+  .total-row td{ font-weight:600; border-top:2px solid var(--line); background:var(--panel-2); color:var(--text); }
+  .total-row td.total-label{ color:var(--amber); }
+  .sort-hint{ font-family:'IBM Plex Mono', monospace; font-size:10px; color:var(--text-faint); font-weight:400; margin-left:8px; }
+
+  .summary-card{ background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px 20px; margin-bottom:14px; }
+  .summary-card h3{ font-family:'Space Grotesk', sans-serif; font-size:16px; color:var(--amber); margin-bottom:10px; }
+  .summary-stats{ display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--text-dim); margin-bottom:12px; font-family:'IBM Plex Mono', monospace; }
+  .summary-stats b{ color:var(--text); }
+  .summary-list{ list-style:none; display:flex; flex-direction:column; gap:6px; font-size:13px; color:var(--text-dim); }
+  .summary-list b{ color:var(--text); }
   .ptable td.doi-cell{ padding:3px 6px; }
   .doi-chip{ display:inline-block; width:100%; padding:3px 6px; border-radius:4px; text-align:right; font-size:11.5px; }
   .doi-healthy{ background:rgba(111,163,131,0.22); color:var(--green); }
@@ -94,7 +110,7 @@
 
 <header>
   <div class="brand">
-    <div class="mark">SNITCH <span>/</span> Simulator and Tracker </div>
+    <div class="mark">SNITCH <span>/</span> PLAN VS ACTUAL</div>
     <div class="sub">MONTH-ON-MONTH &middot; AUG&ndash;DEC 2026</div>
   </div>
   <div class="meta-stamp" id="stamp">Data as of —</div>
@@ -112,12 +128,25 @@
     <button data-metric="qty" class="active">QTY</button>
     <button data-metric="cogs">COGS ₹</button>
   </div>
+  <div class="toggle" id="page-toggle" style="margin-left:8px;">
+    <button data-page="dashboard" class="active">DASHBOARD</button>
+    <button data-page="tracking">SALES TRACKING</button>
+    <button data-page="summary">EXEC SUMMARY</button>
+  </div>
   <div class="active-path" id="active-path"></div>
 </div>
 
 <main>
   <div class="kpi-row" id="kpi-row"></div>
-  <div id="cards-root"></div>
+  <div id="page-dashboard">
+    <div id="cards-root"></div>
+  </div>
+  <div id="page-tracking" style="display:none;">
+    <div id="tracking-root"></div>
+  </div>
+  <div id="page-summary" style="display:none;">
+    <div id="summary-root"></div>
+  </div>
 </main>
 
 <footer>
@@ -131,6 +160,7 @@ let leafIndex = {};        // leafKey -> sorted array of inventory records
 let pipelineIndex = {};    // leafKey -> array of pipeline records
 let allLeafKeysByLC = {};  // "l1||cat" -> [leafKeys...] across the WHOLE dataset (for proration denominator)
 let metric = 'qty';
+let currentPage = 'dashboard';
 
 const MONTHS = ['2026-08','2026-09','2026-10','2026-11','2026-12'];
 const PREV_MONTH = {'2026-08':'2026-07','2026-09':'2026-08','2026-10':'2026-09','2026-11':'2026-10','2026-12':'2026-11'};
@@ -210,6 +240,17 @@ function populateFilters(){
       document.querySelectorAll('#metric-toggle button').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       metric = btn.dataset.metric;
+      render();
+    });
+  });
+  document.querySelectorAll('#page-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#page-toggle button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentPage = btn.dataset.page;
+      document.getElementById('page-dashboard').style.display = currentPage === 'dashboard' ? '' : 'none';
+      document.getElementById('page-tracking').style.display = currentPage === 'tracking' ? '' : 'none';
+      document.getElementById('page-summary').style.display = currentPage === 'summary' ? '' : 'none';
       render();
     });
   });
@@ -375,7 +416,60 @@ function render(){
   });
 
   renderKPIs(sales, leafKeysMatchingFilter, qtyField, valField, f);
-  renderCards(sales, leafKeysMatchingFilter, f, qtyField, valField);
+  if (currentPage === 'dashboard'){
+    renderCards(sales, leafKeysMatchingFilter, f, qtyField, valField);
+  } else if (currentPage === 'tracking'){
+    renderTracking(sales, leafKeysMatchingFilter, f, qtyField, valField);
+  } else {
+    renderExecSummary();
+  }
+}
+
+// fraction of a month elapsed, for the till-date pace check: 1 for fully-past
+// months, 0 for not-yet-started months, (today's day / days in month) for
+// the current month.
+function monthFraction(monthKey){
+  const cur = currentMonthKey();
+  if (monthKey < cur) return 1;
+  if (monthKey > cur) return 0;
+  const now = new Date();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+  return now.getDate() / daysInMonth;
+}
+
+function computeTrackingLedger(entity, f, qtyField, valField){
+  const valKey = metric === 'qty' ? 'qty' : 'cogs_sold';
+  const target = [], actual = [], tillDateTarget = [], delta = [];
+  MONTHS.forEach(m => {
+    const t = targetForLeafSet(entity.leafKeys, f.channel, m, qtyField, valField);
+    const matched = entity.salesRows.filter(x => x.month === m);
+    const a = matched.length ? sumSales(matched, valKey) : 0;
+    target.push(t);
+    actual.push(a);
+    if (t === null){
+      tillDateTarget.push(null);
+      delta.push(null);
+    } else {
+      const tdt = t * monthFraction(m);
+      tillDateTarget.push(tdt);
+      delta.push(tdt - a);
+    }
+  });
+  return { target, actual, tillDateTarget, delta };
+}
+
+function deltaCell(v){
+  if (v === null || v === undefined) return `<td class="dash">—</td>`;
+  const cls = v > 0 ? 'delta-behind' : (v < 0 ? 'delta-ahead' : '');
+  return `<td class="${cls}">${v>0?'+':''}${fmtNum(v)}</td>`;
+}
+
+function renderTracking(sales, leafKeys, f, qtyField, valField){
+  const root = document.getElementById('tracking-root');
+  root.innerHTML = '';
+  CARD_DEFS.forEach(def => {
+    root.appendChild(renderBreakdownSection(def, sales, leafKeys, f, qtyField, valField, 'track_', computeTrackingLedger, TRACKING_BLOCKS));
+  });
 }
 
 // Sequential simulation shared by KPIs and the pivot cards, strictly in month
@@ -452,83 +546,297 @@ function renderKPIs(sales, leafKeys, qtyField, valField, f){
   ).join('');
 }
 
-function renderCards(sales, leafKeys, f, qtyField, valField){
-  const root = document.getElementById('cards-root');
-  root.innerHTML = '';
+let sortState = {}; // cardId -> {mode:'meta', key, dir} | {mode:'value', blockKey, monthIndex, dir}
+const DIM_LABELS = {l1:'L1', cat:'Category', m1:'Meta1', m2:'Meta2', m3:'Meta3'};
 
-  CARD_DEFS.forEach(def => {
-    const entities = {};
-    sales.forEach(r => {
-      if (def.dims.every(d => r[d] == null)) return;
-      const gk = groupKeyOf(r, def.dims);
-      if (!entities[gk]) entities[gk] = { label: def.dims.map(d => r[d] ?? '(none)').join(' × '), salesRows: [], leafKeys: [] };
-      entities[gk].salesRows.push(r);
-    });
-    leafKeys.forEach(lk => {
-      const rec = (leafIndex[lk] || pipelineIndex[lk])[0];
-      if (def.dims.every(d => rec[d] == null)) return;
-      const gk = def.dims.map(d => rec[d] ?? '∅').join(' | ');
-      if (!entities[gk]) entities[gk] = { label: def.dims.map(d => rec[d] ?? '(none)').join(' × '), salesRows: [], leafKeys: [] };
-      entities[gk].leafKeys.push(lk);
-    });
+const DASHBOARD_BLOCKS = [
+  {key:'opening', title:'Opening'},
+  {key:'actual', title:'Sales (Actual)'},
+  {key:'target', title:'Sales Target', note:true},
+  {key:'salesLeft', title:'Sales Left', note:true},
+  {key:'inwards', title:'Inwards'},
+  {key:'closing', title:'Closing (simulated)'},
+  {key:'doi', title:'DOI (Closing/Target×30)', note:true, isDoi:true},
+];
+const TRACKING_BLOCKS = [
+  {key:'target', title:'Sales Target (Full Month)', note:true},
+  {key:'tillDateTarget', title:'Sales Target (Till-Date)', note:true},
+  {key:'actual', title:'Sales (Actual)'},
+  {key:'delta', title:'Sales Left to Achieve (Till-Date)', note:true, isDelta:true},
+];
 
-    const rows = Object.values(entities).sort((a,b) => sumSales(b.salesRows,'gross_sales') - sumSales(a.salesRows,'gross_sales'));
-
-    const section = document.createElement('div');
-    section.className = 'card-section';
-    section.innerHTML = `<h2>${def.title} <span class="rule"></span> <span class="count">${rows.length} shown</span></h2>`;
-
-    if (rows.length === 0){
-      const p = document.createElement('div');
-      p.className = 'empty-note';
-      p.textContent = 'No rows match the current filter at this level.';
-      section.appendChild(p);
-    } else {
-      section.appendChild(buildPivotStrip(rows, f, qtyField, valField));
+function buildEntities(def, sales, leafKeys){
+  const entities = {};
+  sales.forEach(r => {
+    if (def.dims.every(d => r[d] == null)) return;
+    const gk = groupKeyOf(r, def.dims);
+    if (!entities[gk]){
+      const values = {}; def.dims.forEach(d => values[d] = r[d] ?? '(none)');
+      entities[gk] = { values, salesRows: [], leafKeys: [] };
     }
-    root.appendChild(section);
+    entities[gk].salesRows.push(r);
   });
+  leafKeys.forEach(lk => {
+    const rec = (leafIndex[lk] || pipelineIndex[lk])[0];
+    if (def.dims.every(d => rec[d] == null)) return;
+    const gk = def.dims.map(d => rec[d] ?? '∅').join(' | ');
+    if (!entities[gk]){
+      const values = {}; def.dims.forEach(d => values[d] = rec[d] ?? '(none)');
+      entities[gk] = { values, salesRows: [], leafKeys: [] };
+    }
+    entities[gk].leafKeys.push(lk);
+  });
+  return Object.values(entities);
 }
 
-function pivotBlock(title, rows, cellFn, opts={}){
-  const rowsHtml = rows.map(r => {
-    const cells = MONTHS.map((m,i) => cellFn(r, m, i)).join('');
-    return `<tr><td class="rowlabel">${r.label}</td>${cells}</tr>`;
+function lastAvailableDoi(ledger){
+  for (let i = ledger.closing.length - 1; i >= 0; i--){
+    if (ledger.closing[i] !== null && ledger.target[i]) return ledger.closing[i] * 30 / ledger.target[i];
+  }
+  return null;
+}
+
+function sortEntities(rows, ledgers, spec, def){
+  const rowsCopy = rows.slice();
+  if (spec.mode === 'meta' && spec.key === 'sales'){
+    rowsCopy.sort((a,b) => {
+      const sa = sumSales(a.salesRows,'gross_sales'), sb = sumSales(b.salesRows,'gross_sales');
+      return spec.dir === 'asc' ? sa - sb : sb - sa;
+    });
+  } else if (spec.mode === 'meta' && spec.key === 'az'){
+    rowsCopy.sort((a,b) => {
+      const la = def.dims.map(d=>a.values[d]).join(' ');
+      const lb = def.dims.map(d=>b.values[d]).join(' ');
+      return la.localeCompare(lb);
+    });
+  } else if (spec.mode === 'meta' && spec.key === 'doi'){
+    rowsCopy.sort((a,b) => {
+      const da = lastAvailableDoi(ledgers.get(a)), db = lastAvailableDoi(ledgers.get(b));
+      if (da===null && db===null) return 0;
+      if (da===null) return 1;
+      if (db===null) return -1;
+      return spec.dir==='asc' ? da-db : db-da;
+    });
+  } else if (spec.mode === 'value'){
+    rowsCopy.sort((a,b) => {
+      const va = ledgers.get(a)[spec.blockKey][spec.monthIndex];
+      const vb = ledgers.get(b)[spec.blockKey][spec.monthIndex];
+      const na = va===null||va===undefined, nb = vb===null||vb===undefined;
+      if (na && nb) return 0;
+      if (na) return 1;
+      if (nb) return -1;
+      return spec.dir==='asc' ? va-vb : vb-va;
+    });
+  }
+  return rowsCopy;
+}
+
+function renderCellForBlock(blockDef, ledger, i){
+  if (blockDef.isDoi){
+    const c = ledger.closing[i], t = ledger.target[i];
+    if (c===null || !t) return `<td class="doi-cell"><span class="doi-chip doi-none">—</span></td>`;
+    const doi = c*30/t;
+    return `<td class="doi-cell"><span class="doi-chip ${doiClass(doi)}">${doi.toFixed(0)}d</span></td>`;
+  }
+  const v = ledger[blockDef.key][i];
+  if (blockDef.isDelta){
+    if (v===null||v===undefined) return `<td class="dash">—</td>`;
+    const cls = v>0?'delta-behind':(v<0?'delta-ahead':'');
+    return `<td class="${cls}">${v>0?'+':''}${fmtNum(v)}</td>`;
+  }
+  return (v===null||v===undefined) ? `<td class="dash">—</td>` : `<td>${fmtNum(v)}</td>`;
+}
+
+function computeTotal(rows, ledgers, blockDef, monthIndex){
+  if (blockDef.isDoi){
+    let closingSum = 0, targetSum = 0, any = false;
+    rows.forEach(r => {
+      const l = ledgers.get(r);
+      if (l.closing[monthIndex] !== null){ closingSum += l.closing[monthIndex]; any = true; }
+      if (l.target[monthIndex] !== null){ targetSum += l.target[monthIndex]; }
+    });
+    if (!any || !targetSum) return null;
+    return closingSum * 30 / targetSum;
+  }
+  let sum = null;
+  rows.forEach(r => {
+    const v = ledgers.get(r)[blockDef.key][monthIndex];
+    if (v !== null && v !== undefined) sum = (sum||0) + v;
+  });
+  return sum;
+}
+
+function pivotBlockV2(blockDef, rows, def, ledgers, cardId, sortSpec){
+  const dimHeaders = def.dims.map(d => `<th>${DIM_LABELS[d]}</th>`).join('');
+  const monthHeaders = MONTHS.map((m,i) => {
+    const isActive = sortSpec.mode==='value' && sortSpec.blockKey===blockDef.key && sortSpec.monthIndex===i;
+    const arrow = isActive ? (sortSpec.dir==='asc' ? ' ▲' : ' ▼') : '';
+    return `<th class="sortable-th" data-card="${cardId}" data-block="${blockDef.key}" data-month="${i}">${MONTH_LABEL[m]}${arrow}</th>`;
   }).join('');
+
+  const rowsHtml = rows.map(r => {
+    const dimCells = def.dims.map(d => `<td class="rowlabel">${r.values[d]}</td>`).join('');
+    const cells = MONTHS.map((m,i) => renderCellForBlock(blockDef, ledgers.get(r), i)).join('');
+    return `<tr>${dimCells}${cells}</tr>`;
+  }).join('');
+
+  const totalDimCells = def.dims.map((d,i) => i===0 ? `<td class="rowlabel total-label">TOTAL</td>` : `<td class="rowlabel"></td>`).join('');
+  const totalCells = MONTHS.map((m,i) => {
+    const t = computeTotal(rows, ledgers, blockDef, i);
+    if (t === null || t === undefined) return `<td class="dash">—</td>`;
+    if (blockDef.isDoi) return `<td><span class="doi-chip ${doiClass(t)}">${t.toFixed(0)}d</span></td>`;
+    if (blockDef.isDelta){
+      const cls = t>0?'delta-behind':(t<0?'delta-ahead':'');
+      return `<td class="${cls}">${t>0?'+':''}${fmtNum(t)}</td>`;
+    }
+    return `<td>${fmtNum(t)}</td>`;
+  }).join('');
+
   return `
     <div class="pivot-block">
-      <h4 class="${opts.note ? 'target-note' : ''}">${title}</h4>
+      <h4 class="${blockDef.note ? 'target-note' : ''}">${blockDef.title}</h4>
       <table class="ptable">
-        <thead><tr><th>Entity</th>${MONTHS.map(m=>`<th>${MONTH_LABEL[m]}</th>`).join('')}</tr></thead>
+        <thead><tr>${dimHeaders}${monthHeaders}</tr></thead>
         <tbody>${rowsHtml}</tbody>
+        <tfoot><tr class="total-row">${totalDimCells}${totalCells}</tr></tfoot>
       </table>
     </div>`;
 }
 
-function buildPivotStrip(rows, f, qtyField, valField){
+function renderBreakdownSection(def, sales, leafKeys, f, qtyField, valField, cardIdPrefix, ledgerFn, blockDefs){
+  const cardId = cardIdPrefix + def.id;
+  const rowsRaw = buildEntities(def, sales, leafKeys);
   const ledgers = new Map();
-  rows.forEach(r => ledgers.set(r, computeLedger(r, f, qtyField, valField)));
+  rowsRaw.forEach(r => ledgers.set(r, ledgerFn(r, f, qtyField, valField)));
 
-  function numCell(v){ return v === null || v === undefined ? `<td class="dash">—</td>` : `<td>${fmtNum(v)}</td>`; }
-  function doiCell(r, i){
-    const l = ledgers.get(r);
-    const c = l.closing[i], t = l.target[i];
-    if (c === null || !t) return `<td class="doi-cell"><span class="doi-chip doi-none">—</span></td>`;
-    const doi = c * 30 / t;
-    return `<td class="doi-cell"><span class="doi-chip ${doiClass(doi)}">${doi.toFixed(0)}d</span></td>`;
+  const spec = sortState[cardId] || {mode:'meta', key:'sales', dir:'desc'};
+  const rows = sortEntities(rowsRaw, ledgers, spec, def);
+
+  const hasDoiBlock = blockDefs.some(b => b.isDoi);
+  const section = document.createElement('div');
+  section.className = 'card-section';
+  section.innerHTML = `
+    <h2>${def.title} <span class="rule"></span>
+      <span class="count">${rows.length} shown</span>
+      <select class="sort-select" data-card="${cardId}">
+        <option value="sales_desc">Sales (high→low)</option>
+        <option value="sales_asc">Sales (low→high)</option>
+        <option value="az">A→Z</option>
+        ${hasDoiBlock ? '<option value="doi_desc">DOI (stuck first)</option><option value="doi_asc">DOI (healthy first)</option>' : ''}
+      </select>
+      <span class="sort-hint">or click any column header to sort by that value</span>
+    </h2>`;
+  const sel = section.querySelector('.sort-select');
+  if (spec.mode === 'meta') sel.value = spec.key === 'az' ? 'az' : `${spec.key}_${spec.dir}`;
+  sel.addEventListener('change', (e) => {
+    const [key, dir] = e.target.value === 'az' ? ['az','asc'] : e.target.value.split('_');
+    sortState[cardId] = { mode:'meta', key, dir };
+    render();
+  });
+
+  if (rows.length === 0){
+    const p = document.createElement('div');
+    p.className = 'empty-note';
+    p.textContent = 'No rows match the current filter at this level.';
+    section.appendChild(p);
+  } else {
+    const strip = document.createElement('div');
+    strip.className = 'pivot-strip';
+    strip.innerHTML = blockDefs.map(bd => pivotBlockV2(bd, rows, def, ledgers, cardId, spec)).join('');
+    section.appendChild(strip);
+
+    strip.querySelectorAll('.sortable-th').forEach(th => {
+      th.addEventListener('click', () => {
+        const blockKey = th.dataset.block;
+        const monthIndex = parseInt(th.dataset.month, 10);
+        const cur = sortState[cardId];
+        let dir = 'desc';
+        if (cur && cur.mode==='value' && cur.blockKey===blockKey && cur.monthIndex===monthIndex){
+          dir = cur.dir === 'desc' ? 'asc' : 'desc';
+        }
+        sortState[cardId] = { mode:'value', blockKey, monthIndex, dir };
+        render();
+      });
+    });
   }
+  return section;
+}
 
-  const strip = document.createElement('div');
-  strip.className = 'pivot-strip';
-  strip.innerHTML =
-    pivotBlock('Opening', rows, (r,m,i) => numCell(ledgers.get(r).opening[i])) +
-    pivotBlock('Sales (Actual)', rows, (r,m,i) => numCell(ledgers.get(r).actual[i])) +
-    pivotBlock('Sales Target', rows, (r,m,i) => numCell(ledgers.get(r).target[i]), {note:true}) +
-    pivotBlock('Sales Left', rows, (r,m,i) => numCell(ledgers.get(r).salesLeft[i]), {note:true}) +
-    pivotBlock('Inwards', rows, (r,m,i) => numCell(ledgers.get(r).inwards[i])) +
-    pivotBlock('Closing (simulated)', rows, (r,m,i) => numCell(ledgers.get(r).closing[i])) +
-    pivotBlock('DOI (Closing/Target×30)', rows, (r,m,i) => doiCell(r,i), {note:true});
-  return strip;
+function renderCards(sales, leafKeys, f, qtyField, valField){
+  const root = document.getElementById('cards-root');
+  root.innerHTML = '';
+  CARD_DEFS.forEach(def => {
+    root.appendChild(renderBreakdownSection(def, sales, leafKeys, f, qtyField, valField, '', computeLedger, DASHBOARD_BLOCKS));
+  });
+}
+
+// Executive Summary: always computed at the WHOLE-BUSINESS level (ignores active
+// filters deliberately) so it reads as a stable, consistent narrative regardless
+// of whatever slice someone happens to have selected on the other tabs.
+function renderExecSummary(){
+  const root = document.getElementById('summary-root');
+  root.innerHTML = '';
+
+  const qtyField = 'total_qty', valField = 'total_value';
+  const allLeafKeys = Object.keys(leafIndex);
+  const rootEntity = { salesRows: DATA.sales, leafKeys: allLeafKeys };
+  const globalLedger = computeLedger(rootEntity, {channel:'ALL'}, qtyField, valField);
+
+  const catDef = CARD_DEFS.find(d => d.id === 'cat');
+  const catRows = buildEntities(catDef, DATA.sales, allLeafKeys);
+  const catLedgers = new Map();
+  catRows.forEach(r => catLedgers.set(r, computeLedger(r, {channel:'ALL'}, qtyField, valField)));
+
+  MONTHS.forEach((m,i) => {
+    const actual = globalLedger.actual[i];
+    const target = globalLedger.target[i];
+    const attain = target ? (actual/target*100) : null;
+    const closing = globalLedger.closing[i];
+    const doi = (closing!==null && target) ? closing*30/target : null;
+
+    const topCats = catRows.slice()
+      .sort((a,b) => (catLedgers.get(b).actual[i]||0) - (catLedgers.get(a).actual[i]||0))
+      .slice(0,3)
+      .map(r => `${r.values.cat} (${fmtNum(catLedgers.get(r).actual[i]||0)})`);
+    const anyActual = catRows.some(r => (catLedgers.get(r).actual[i]||0) > 0);
+
+    const riskCats = catRows.filter(r => {
+      const c = catLedgers.get(r).closing[i];
+      return c !== null && c < 0;
+    }).map(r => r.values.cat);
+
+    const slowCats = catRows
+      .filter(r => { const l = catLedgers.get(r); return l.closing[i]!==null && l.target[i]; })
+      .sort((a,b) => {
+        const la = catLedgers.get(a), lb = catLedgers.get(b);
+        return (lb.closing[i]*30/lb.target[i]) - (la.closing[i]*30/la.target[i]);
+      })
+      .slice(0,2)
+      .map(r => {
+        const l = catLedgers.get(r);
+        return `${r.values.cat} (${(l.closing[i]*30/l.target[i]).toFixed(0)}d)`;
+      });
+
+    const card = document.createElement('div');
+    card.className = 'summary-card';
+    card.innerHTML = `
+      <h3>${MONTH_LABEL[m]} 2026</h3>
+      <div class="summary-stats">
+        <span>Sales <b>${fmtNum(actual)}</b> vs Target <b>${target?fmtNum(target):'—'}</b> &nbsp;(${attain!==null?attain.toFixed(1)+'% attainment':'no target'})</span>
+        <span>Closing (simulated) <b>${closing!==null?fmtNum(closing):'—'}</b> &middot; Blended DOI <b>${doi!==null?doi.toFixed(0)+'d':'—'}</b></span>
+      </div>
+      <ul class="summary-list">
+        <li><b>Top categories by sales:</b> ${anyActual ? topCats.join(', ') : 'No actual sales recorded yet for this month'}</li>
+        <li><b>Stock-out risk (simulated closing goes negative):</b> ${riskCats.length ? riskCats.join(', ') : 'None flagged'}</li>
+        <li><b>Slowest movers (highest DOI):</b> ${slowCats.join(', ') || '—'}</li>
+      </ul>`;
+    root.appendChild(card);
+  });
+
+  const note = document.createElement('div');
+  note.className = 'empty-note';
+  note.textContent = 'This summary always reflects the whole business (Qty basis, all channels) regardless of filters set on the other tabs.';
+  root.appendChild(note);
 }
 </script>
 
