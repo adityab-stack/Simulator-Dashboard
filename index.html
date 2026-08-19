@@ -128,10 +128,15 @@
     <button data-metric="qty" class="active">QTY</button>
     <button data-metric="cogs">COGS ₹</button>
   </div>
+  <div class="toggle" id="returns-view-toggle" style="margin-left:8px;">
+    <button data-view="net" class="active">NET (post-returns)</button>
+    <button data-view="gross">GROSS (pre-returns)</button>
+  </div>
   <div class="toggle" id="page-toggle" style="margin-left:8px;">
     <button data-page="dashboard" class="active">DASHBOARD</button>
     <button data-page="tracking">SALES TRACKING</button>
     <button data-page="summary">EXEC SUMMARY</button>
+    <button data-page="returns">RETURNS</button>
   </div>
   <div class="active-path" id="active-path"></div>
 </div>
@@ -147,11 +152,15 @@
   <div id="page-summary" style="display:none;">
     <div id="summary-root"></div>
   </div>
+  <div id="page-returns" style="display:none;">
+    <div id="returns-root"></div>
+  </div>
 </main>
 
 <footer>
   Rebuilt from Google Sheets via <b style="color:var(--thread)">build_data.py</b> &middot; V1.2<br>
-  <span class="warn">Target = new category files (jeans/shirts/trousers/tshirts) where covered, else old Targets tab (Shopify only). Plan Closing still "—" until that file arrives.</span>
+  <span class="warn">Target = new category files (jeans/shirts/trousers/tshirts) where covered, else old Targets tab (Shopify only). Plan Closing still "—" until that file arrives.</span><br>
+  <span class="warn">Sales (Actual) and Sales Target are net-of-returns (2026 YTD weighted avg return% by Channel×L1×Category). Combos with no returns data on file are shown at their gross value (0% assumed).</span>
 </footer>
 
 <script>
@@ -165,7 +174,11 @@ let currentPage = 'dashboard';
 const MONTHS = ['2026-08','2026-09','2026-10','2026-11','2026-12'];
 const PREV_MONTH = {'2026-08':'2026-07','2026-09':'2026-08','2026-10':'2026-09','2026-11':'2026-10','2026-12':'2026-11'};
 const MONTH_LABEL = {'2026-06':'Jun','2026-07':'Jul','2026-08':'Aug','2026-09':'Sep','2026-10':'Oct','2026-11':'Nov','2026-12':'Dec'};
-const CHANNEL_TO_INV_FIELD = {'Shopify':'online', 'Marketplace':'mp', 'Offline':'offline'};
+// Inv Data 2 only has 3 stock pools (MP/Online/Offline), while Sales/Target have
+// more channel names than that. Confirmed: Online_Inv_Qty is ONE shared warehouse
+// pool covering Shopify + Marketplace + MP-SOR combined (all non-store channels);
+// only Offline stores have their own separate pool.
+const CHANNEL_TO_INV_FIELD = {'Shopify':'online', 'Marketplace':'online', 'MP-SOR':'online', 'Offline':'offline'};
 const LAST_MONTH = MONTHS[MONTHS.length - 1];
 const NEW_FILE_CATS = new Set(['jeans','shirts','trousers','tshirts']);
 
@@ -192,10 +205,97 @@ function currentMonthKey(){
 fetch('data/data.json').then(r => r.json()).then(json => {
   DATA = json;
   document.getElementById('stamp').innerHTML = 'Data as of <b>' + new Date(json.generated_at).toLocaleString() + '</b>';
+  buildLearnedReturns();
+  applyReturnsAdjustment();
   buildIndexes();
   populateFilters();
   render();
 });
+
+// Reduces Actual Sales AND Target down to net-of-returns, at Channel x L1 x
+// Category grain (matching the returns file's own grain). Mutates DATA.sales /
+// DATA.targets / DATA.targets_og in place so every existing downstream
+// calculation (Sales Left, Closing simulation, DOI, Attainment) automatically
+// operates on net figures without needing separate handling everywhere.
+// Original gross values are preserved as *_gross fields for reference. Combos
+// with no returns data on file are left untouched (0% assumed, not fabricated).
+// Business policy: hard ceilings on return% regardless of what's learned or
+// typed in, per your instruction. Offline has no cap (not mentioned).
+// Hard ceilings, enforced regardless of what's learned or typed in.
+// Offline = 0 always (store returns aren't netted the same way, per instruction).
+const RETURN_CAPS = {'Marketplace': 45, 'Shopify': 30, 'Offline': 0};
+const RETURN_CHANNELS = ['Marketplace', 'Shopify', 'Offline'];
+
+let learnedByChannelLC = {};   // "channel||l1||cat" -> [{month, pct, sales_qty, return_qty}, ...]
+let learnedBlendedByChannelLC = {}; // "channel||l1||cat" -> blended pct for that specific channel
+
+function buildLearnedReturns(){
+  const byChannelLC = {};
+  (DATA.returns || []).forEach(r => {
+    const ck = [r.channel, r.l1, r.cat].join('||');
+    (byChannelLC[ck] = byChannelLC[ck] || []).push(r);
+  });
+  Object.keys(byChannelLC).forEach(k => {
+    byChannelLC[k].sort((a,b) => a.month.localeCompare(b.month));
+    byChannelLC[k].forEach(r => { r.pct = r.sales_qty > 0 ? (r.return_qty/r.sales_qty*100) : null; });
+  });
+  learnedByChannelLC = byChannelLC;
+
+  learnedBlendedByChannelLC = {};
+  Object.entries(byChannelLC).forEach(([k, rows]) => {
+    let sales=0, ret=0;
+    rows.forEach(r => { sales += r.sales_qty; ret += r.return_qty; });
+    learnedBlendedByChannelLC[k] = sales > 0 ? (ret/sales*100) : 0;
+  });
+}
+
+function getInputPct(channel, l1, cat){
+  if (RETURN_CAPS[channel] === 0) return 0; // Offline: fixed, not editable
+  const key = 'returns_input::' + channel + '||' + l1 + '||' + cat;
+  const stored = localStorage.getItem(key);
+  if (stored !== null && stored !== '') return parseFloat(stored);
+  return learnedBlendedByChannelLC[[channel,l1,cat].join('||')] || 0;
+}
+function setInputPct(channel, l1, cat, value){
+  const key = 'returns_input::' + channel + '||' + l1 + '||' + cat;
+  localStorage.setItem(key, value);
+}
+function resetInputPct(channel, l1, cat){
+  const key = 'returns_input::' + channel + '||' + l1 + '||' + cat;
+  localStorage.removeItem(key);
+}
+function getAppliedPct(channel, l1, cat){
+  const base = getInputPct(channel, l1, cat);
+  const cap = RETURN_CAPS[channel];
+  return cap !== undefined ? Math.min(base, cap) : base;
+}
+
+let returnsView = 'net'; // 'net' | 'gross'
+
+// Idempotent -- always recomputes from the *_gross originals, never from the
+// previous result. Safe to call on every render (e.g. after editing a Returns
+// input, or toggling Net/Gross), unlike a one-shot mutation.
+function applyReturnsAdjustment(){
+  DATA.sales.forEach(r => {
+    if (r.qty_gross === undefined){ r.qty_gross = r.qty; r.cogs_sold_gross = r.cogs_sold; r.gross_sales_gross = r.gross_sales; }
+    const pct = returnsView === 'gross' ? 0 : getAppliedPct(r.channel, r.l1, r.cat);
+    const factor = Math.max(0, 1 - pct/100);
+    r.qty = r.qty_gross * factor;
+    r.cogs_sold = r.cogs_sold_gross * factor;
+    r.gross_sales = r.gross_sales_gross * factor;
+    r.return_pct_applied = pct;
+  });
+  (DATA.targets || []).forEach(r => {
+    if (r.qty_gross === undefined) r.qty_gross = r.qty;
+    const pct = returnsView === 'gross' ? 0 : getAppliedPct(r.channel, r.l1, r.cat);
+    r.qty = r.qty_gross * Math.max(0, 1 - pct/100);
+  });
+  (DATA.targets_og || []).forEach(r => {
+    if (r.qty_gross === undefined) r.qty_gross = r.qty;
+    const pct = returnsView === 'gross' ? 0 : getAppliedPct('Shopify', r.l1, r.cat); // OG fallback is Shopify-only
+    r.qty = r.qty_gross * Math.max(0, 1 - pct/100);
+  });
+}
 
 function leafKeyOf(r){ return [r.l1, r.cat, r.m1, r.m2, r.m3].map(v => v ?? '∅').join('|'); }
 
@@ -243,6 +343,14 @@ function populateFilters(){
       render();
     });
   });
+  document.querySelectorAll('#returns-view-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#returns-view-toggle button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      returnsView = btn.dataset.view;
+      render();
+    });
+  });
   document.querySelectorAll('#page-toggle button').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('#page-toggle button').forEach(b => b.classList.remove('active'));
@@ -251,6 +359,7 @@ function populateFilters(){
       document.getElementById('page-dashboard').style.display = currentPage === 'dashboard' ? '' : 'none';
       document.getElementById('page-tracking').style.display = currentPage === 'tracking' ? '' : 'none';
       document.getElementById('page-summary').style.display = currentPage === 'summary' ? '' : 'none';
+      document.getElementById('page-returns').style.display = currentPage === 'returns' ? '' : 'none';
       render();
     });
   });
@@ -343,10 +452,12 @@ function inwardsForLeaf(leafKey, month){
 }
 
 // ---- Target: new-file primary, OG-tab fallback (Shopify only), then proration ----
+function eqCI(a, b){ return (a||'').toString().trim().toLowerCase() === (b||'').toString().trim().toLowerCase(); }
+
 function targetLCFromNewSource(channelFilter, l1, cat, month){
   let sum = null;
   (DATA.targets || []).forEach(r => {
-    if (r.l1 !== l1 || r.cat !== cat || r.month !== month) return;
+    if (!eqCI(r.l1,l1) || !eqCI(r.cat,cat) || r.month !== month) return;
     if (channelFilter !== 'ALL' && r.channel !== channelFilter) return;
     sum = (sum || 0) + r.qty;
   });
@@ -355,7 +466,7 @@ function targetLCFromNewSource(channelFilter, l1, cat, month){
 function targetLCFromOG(l1, cat, month){
   let sum = null;
   (DATA.targets_og || []).forEach(r => {
-    if (r.l1 === l1 && r.cat === cat && r.month === month){ sum = (sum||0) + r.qty; }
+    if (eqCI(r.l1,l1) && eqCI(r.cat,cat) && r.month === month){ sum = (sum||0) + r.qty; }
   });
   return sum;
 }
@@ -367,6 +478,47 @@ function targetLC(channelFilter, l1, cat, month){
     return targetLCFromOG(l1, cat, month);
   }
   return null; // OG fallback is Shopify-only, no data for other channels on uncovered categories
+}
+
+let costRateCache = {};
+
+// Cost-per-unit for a given L1+Category+month, used to convert a unit-based
+// Target (that's all the target files have) into a COGS-value equivalent when
+// viewing in COGS mode. Cascades through three sources since Sales only has
+// real data for months that have actually happened:
+//   1. Sales (COGS sold / Qty sold) at this exact L1+Cat+month
+//   2. Pipeline (COGS value / Qty) at this L1+Cat, any month -- cost basis
+//      doesn't really have a "month of sale", so no month filter here
+//   3. Inventory (latest available value/qty snapshot) at this L1+Cat
+// Returns null (never a fabricated number) if none of the three have any data.
+function costPerUnitForLC(l1, cat, month){
+  const cacheKey = l1 + '||' + cat + '||' + month;
+  if (costRateCache.hasOwnProperty(cacheKey)) return costRateCache[cacheKey];
+
+  let qtySum = 0, cogsSum = 0;
+  DATA.sales.forEach(r => {
+    if (r.l1 === l1 && r.cat === cat && r.month === month){ qtySum += r.qty; cogsSum += r.cogs_sold; }
+  });
+  if (qtySum > 0){ return costRateCache[cacheKey] = cogsSum / qtySum; }
+
+  qtySum = 0; cogsSum = 0;
+  (DATA.pipeline || []).forEach(r => {
+    if (r.l1 === l1 && r.cat === cat){ qtySum += r.qty; cogsSum += r.cogs_value; }
+  });
+  if (qtySum > 0){ return costRateCache[cacheKey] = cogsSum / qtySum; }
+
+  qtySum = 0; cogsSum = 0;
+  const leaves = allLeafKeysByLC[l1 + '||' + cat] || [];
+  leaves.forEach(lk => {
+    const recs = leafIndex[lk];
+    if (!recs || !recs.length) return;
+    const latest = recs[recs.length - 1];
+    qtySum += latest.total_qty || 0;
+    cogsSum += latest.total_value || 0;
+  });
+  if (qtySum > 0){ return costRateCache[cacheKey] = cogsSum / qtySum; }
+
+  return costRateCache[cacheKey] = null;
 }
 
 // Target for an arbitrary set of leaves (already filtered to the current card-group +
@@ -381,8 +533,13 @@ function targetForLeafSet(leafKeySet, channelFilter, month, qtyField, valField){
   let total = null;
   Object.entries(byLC).forEach(([key, leavesInGroup]) => {
     const [l1, cat] = key.split('||');
-    const tLC = targetLC(channelFilter, l1, cat, month);
+    let tLC = targetLC(channelFilter, l1, cat, month);
     if (tLC === null) return;
+    if (metric === 'cogs'){
+      const rate = costPerUnitForLC(l1, cat, month);
+      if (rate === null) return; // can't convert to value honestly, skip this bucket
+      tLC = tLC * rate;
+    }
     const invGroup = leavesInGroup.reduce((a,lk) => a + currentInvForLeaf(lk, qtyField, valField), 0);
     const allLeaves = allLeafKeysByLC[key] || [];
     const invTotal = allLeaves.reduce((a,lk) => a + currentInvForLeaf(lk, qtyField, valField), 0);
@@ -403,6 +560,7 @@ function sumSales(rows, field){ return rows.reduce((a,r) => a + (r[field]||0), 0
 function groupKeyOf(row, dims){ return dims.map(d => row[d] ?? '∅').join(' | '); }
 
 function render(){
+  applyReturnsAdjustment();
   const f = getFilters();
   document.getElementById('active-path').textContent =
     'Filter: ' + ([f.channel, f.l1, f.cat, f.m1, f.m2, f.m3].filter(v => v !== 'ALL').join(' → ') || 'All data');
@@ -420,8 +578,10 @@ function render(){
     renderCards(sales, leafKeysMatchingFilter, f, qtyField, valField);
   } else if (currentPage === 'tracking'){
     renderTracking(sales, leafKeysMatchingFilter, f, qtyField, valField);
-  } else {
+  } else if (currentPage === 'summary'){
     renderExecSummary();
+  } else {
+    renderReturnsTab();
   }
 }
 
@@ -524,7 +684,8 @@ function renderKPIs(sales, leafKeys, qtyField, valField, f){
   const ledger = computeLedger({ leafKeys, salesRows: sales }, f, qtyField, valField);
   const totalTarget = ledger.target.reduce((a,v) => v!==null ? a+v : a, 0);
   const anyTarget = ledger.target.some(v => v !== null);
-  const attain = (anyTarget && totalTarget) ? (salesQty / totalTarget * 100) : null;
+  const actualForAttain = metric === 'qty' ? salesQty : salesCogs;
+  const attain = (anyTarget && totalTarget) ? (actualForAttain / totalTarget * 100) : null;
 
   let lastMonthIdx = -1;
   for (let i = 0; i < MONTHS.length; i++){ if (ledger.closing[i] !== null) lastMonthIdx = i; }
@@ -777,66 +938,125 @@ function renderExecSummary(){
   const root = document.getElementById('summary-root');
   root.innerHTML = '';
 
-  const qtyField = 'total_qty', valField = 'total_value';
+  const note = document.createElement('div');
+  note.className = 'empty-note';
+  note.textContent = 'Whole-business totals only (no L1/Category/Meta breakdown), month-on-month, always pinned to all channels regardless of what\'s selected on the filter rail above.';
+  root.appendChild(note);
+
+  const globalF = {channel:'ALL', l1:'ALL', cat:'ALL', m1:'ALL', m2:'ALL', m3:'ALL'};
   const allLeafKeys = Object.keys(leafIndex);
-  const rootEntity = { salesRows: DATA.sales, leafKeys: allLeafKeys };
-  const globalLedger = computeLedger(rootEntity, {channel:'ALL'}, qtyField, valField);
+  const qtyField = 'total_qty', valField = 'total_value';
+  const wholeBusiness = { values: {l1:'Whole Business'}, salesRows: DATA.sales, leafKeys: allLeafKeys };
+  const ledger = computeLedger(wholeBusiness, globalF, qtyField, valField);
+  const ledgers = new Map([[wholeBusiness, ledger]]);
+  const fakeDef = { dims: ['l1'] };
 
-  const catDef = CARD_DEFS.find(d => d.id === 'cat');
-  const catRows = buildEntities(catDef, DATA.sales, allLeafKeys);
-  const catLedgers = new Map();
-  catRows.forEach(r => catLedgers.set(r, computeLedger(r, {channel:'ALL'}, qtyField, valField)));
-
-  MONTHS.forEach((m,i) => {
-    const actual = globalLedger.actual[i];
-    const target = globalLedger.target[i];
-    const attain = target ? (actual/target*100) : null;
-    const closing = globalLedger.closing[i];
-    const doi = (closing!==null && target) ? closing*30/target : null;
-
-    const topCats = catRows.slice()
-      .sort((a,b) => (catLedgers.get(b).actual[i]||0) - (catLedgers.get(a).actual[i]||0))
-      .slice(0,3)
-      .map(r => `${r.values.cat} (${fmtNum(catLedgers.get(r).actual[i]||0)})`);
-    const anyActual = catRows.some(r => (catLedgers.get(r).actual[i]||0) > 0);
-
-    const riskCats = catRows.filter(r => {
-      const c = catLedgers.get(r).closing[i];
-      return c !== null && c < 0;
-    }).map(r => r.values.cat);
-
-    const slowCats = catRows
-      .filter(r => { const l = catLedgers.get(r); return l.closing[i]!==null && l.target[i]; })
-      .sort((a,b) => {
-        const la = catLedgers.get(a), lb = catLedgers.get(b);
-        return (lb.closing[i]*30/lb.target[i]) - (la.closing[i]*30/la.target[i]);
-      })
-      .slice(0,2)
-      .map(r => {
-        const l = catLedgers.get(r);
-        return `${r.values.cat} (${(l.closing[i]*30/l.target[i]).toFixed(0)}d)`;
-      });
-
-    const card = document.createElement('div');
-    card.className = 'summary-card';
-    card.innerHTML = `
-      <h3>${MONTH_LABEL[m]} 2026</h3>
-      <div class="summary-stats">
-        <span>Sales <b>${fmtNum(actual)}</b> vs Target <b>${target?fmtNum(target):'—'}</b> &nbsp;(${attain!==null?attain.toFixed(1)+'% attainment':'no target'})</span>
-        <span>Closing (simulated) <b>${closing!==null?fmtNum(closing):'—'}</b> &middot; Blended DOI <b>${doi!==null?doi.toFixed(0)+'d':'—'}</b></span>
-      </div>
-      <ul class="summary-list">
-        <li><b>Top categories by sales:</b> ${anyActual ? topCats.join(', ') : 'No actual sales recorded yet for this month'}</li>
-        <li><b>Stock-out risk (simulated closing goes negative):</b> ${riskCats.length ? riskCats.join(', ') : 'None flagged'}</li>
-        <li><b>Slowest movers (highest DOI):</b> ${slowCats.join(', ') || '—'}</li>
-      </ul>`;
-    root.appendChild(card);
-  });
+  const section = document.createElement('div');
+  section.className = 'card-section';
+  section.innerHTML = `<h2>Whole Business <span class="rule"></span> <span class="count">Aug\u2013Dec 2026</span></h2>`;
+  const strip = document.createElement('div');
+  strip.className = 'pivot-strip';
+  strip.innerHTML = DASHBOARD_BLOCKS.map(bd => pivotBlockV2(bd, [wholeBusiness], fakeDef, ledgers, 'summary_whole', {mode:'meta', key:'sales', dir:'desc'})).join('');
+  section.appendChild(strip);
+  root.appendChild(section);
+}function renderReturnsTab(){
+  const root = document.getElementById('returns-root');
+  root.innerHTML = '';
 
   const note = document.createElement('div');
   note.className = 'empty-note';
-  note.textContent = 'This summary always reflects the whole business (Qty basis, all channels) regardless of filters set on the other tabs.';
+  note.innerHTML = 'Learned = frozen 2026 historical data (one-time export, not re-fetched). Input = what the simulator actually applies, edited directly per Channel × L1 × Category, pre-filled from Learned. ' +
+    'Hard caps enforced on every keystroke: <b style="color:var(--amber)">Marketplace ≤ 45%</b>, <b style="color:var(--amber)">Shopify ≤ 30%</b>, <b style="color:var(--amber)">Offline fixed at 0%</b> (not editable).';
   root.appendChild(note);
+
+  // ---- Learned reference (read-only, MoM) ----
+  const learnedSection = document.createElement('div');
+  learnedSection.className = 'card-section';
+  const allMonths = [...new Set((DATA.returns||[]).map(r=>r.month))].sort();
+  const channelLCKeys = Object.keys(learnedByChannelLC).sort();
+
+  const learnedRows = channelLCKeys.map(k => {
+    const [channel,l1,cat] = k.split('||');
+    const byMonth = {};
+    learnedByChannelLC[k].forEach(r => byMonth[r.month] = r.pct);
+    return {channel, l1, cat, byMonth};
+  });
+
+  learnedSection.innerHTML = `<h2>Learned (2026, historical, read-only) <span class="rule"></span> <span class="count">${learnedRows.length} shown</span></h2>`;
+  const learnedTable = document.createElement('div');
+  learnedTable.className = 'pivot-strip';
+  learnedTable.innerHTML = `
+    <div class="pivot-block" style="min-width:900px;">
+      <h4>Return % by month</h4>
+      <table class="ptable">
+        <thead><tr><th>Channel</th><th>L1</th><th>Category</th>${allMonths.map(m=>`<th>${m}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${learnedRows.map(r => `<tr>
+            <td class="rowlabel">${r.channel}</td><td class="rowlabel">${r.l1}</td><td class="rowlabel">${r.cat}</td>
+            ${allMonths.map(m => r.byMonth[m]!==undefined ? `<td>${r.byMonth[m].toFixed(1)}%</td>` : `<td class="dash">—</td>`).join('')}
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  learnedSection.appendChild(learnedTable);
+  root.appendChild(learnedSection);
+
+  // ---- Editable input (per Channel x L1 x Category, applied directly) ----
+  const inputSection = document.createElement('div');
+  inputSection.className = 'card-section';
+  const lcSet = new Set();
+  Object.keys(learnedBlendedByChannelLC).forEach(k => {
+    const [,l1,cat] = k.split('||');
+    lcSet.add(l1+'||'+cat);
+  });
+  const lcKeys = [...lcSet].sort();
+  inputSection.innerHTML = `<h2>Input (editable — applied directly, per channel) <span class="rule"></span> <span class="count">${lcKeys.length} rows</span></h2>`;
+
+  const inputTable = document.createElement('div');
+  inputTable.className = 'pivot-strip';
+  inputTable.innerHTML = `
+    <div class="pivot-block" style="min-width:760px;">
+      <table class="ptable">
+        <thead><tr><th>L1</th><th>Category</th><th>Marketplace (≤45%)</th><th>Shopify (≤30%)</th><th>Offline (fixed 0%)</th><th></th></tr></thead>
+        <tbody>
+          ${lcKeys.map(k => {
+            const [l1,cat] = k.split('||');
+            return `<tr>
+              <td class="rowlabel">${l1}</td><td class="rowlabel">${cat}</td>
+              ${['Marketplace','Shopify'].map(ch => {
+                const val = getAppliedPct(ch, l1, cat);
+                return `<td><input type="number" step="0.1" min="0" max="${RETURN_CAPS[ch]}" class="return-input" data-channel="${ch}" data-l1="${l1}" data-cat="${cat}" value="${val.toFixed(1)}" style="width:70px; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:4px 6px; border-radius:4px; text-align:right;"></td>`;
+              }).join('')}
+              <td class="dash" style="text-align:right; padding-right:10px;">0.0% (fixed)</td>
+              <td>
+                <button class="reset-row-btn" data-l1="${l1}" data-cat="${cat}" style="background:transparent;border:1px solid var(--line);color:var(--text-faint);padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer;">Reset</button>
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  inputSection.appendChild(inputTable);
+  root.appendChild(inputSection);
+
+  inputTable.querySelectorAll('.return-input').forEach(inp => {
+    inp.addEventListener('change', (e) => {
+      const channel = e.target.dataset.channel, l1 = e.target.dataset.l1, cat = e.target.dataset.cat;
+      let v = parseFloat(e.target.value);
+      if (isNaN(v)) v = 0;
+      const cap = RETURN_CAPS[channel];
+      if (cap !== undefined && v > cap) v = cap; // clamp immediately, visible feedback
+      setInputPct(channel, l1, cat, v);
+      render();
+    });
+  });
+  inputTable.querySelectorAll('.reset-row-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      resetInputPct('Marketplace', btn.dataset.l1, btn.dataset.cat);
+      resetInputPct('Shopify', btn.dataset.l1, btn.dataset.cat);
+      render();
+    });
+  });
 }
 </script>
 

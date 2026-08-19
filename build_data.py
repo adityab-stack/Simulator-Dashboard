@@ -35,7 +35,7 @@ Setup for mode A (one-time):
   6. Share the actual Google Sheet with that email, Viewer access
   Done -- python build_data.py now works with zero manual downloads, forever.
 """
-import json, datetime, sys, os
+import json, datetime, sys, os, csv
 import openpyxl
 
 SHEET_ID = "1PqtpL9w2Tneon_-6zz7BGiW5YUz4fhDCrgn687r_CZw"
@@ -171,6 +171,23 @@ def month_key(dt):
     return dt.strftime("%Y-%m")
 
 
+def build_returns():
+    """Loads the frozen, one-time 'learning' dataset (data/returns_learned.json,
+    monthly Sales Qty / Return Qty at Channel x L1 x Category grain, 2026 only,
+    MP-SOR already merged into Marketplace). This is NOT re-derived from a live
+    source -- it's a static snapshot used as the starting point for the editable
+    Returns tab in the dashboard, which is where the actually-applied rates
+    (with caps, and any manual overrides) live from here on."""
+    path = os.path.join(HERE, "data", "returns_learned.json")
+    if not os.path.exists(path):
+        print(f"NOTE: {path} not found -- Returns tab will start empty (0% assumed everywhere).")
+        return []
+    with open(path) as f:
+        learned = json.load(f)
+    print(f"Returns: loaded {len(learned)} frozen monthly learning rows.")
+    return learned
+
+
 def build_targets():
     """Reads the 4 category target files from data/targets/, aggregates away
     Branch/State/Store-Opening-Date/ASP-Bin (V1.2 territory) down to
@@ -291,6 +308,7 @@ def build(xlsx_path_or_workbook):
         })
 
     targets = build_targets()
+    returns = build_returns()
 
     og_path = os.path.join(HERE, "data", "targets_og_fallback.json")
     targets_og = []
@@ -307,6 +325,7 @@ def build(xlsx_path_or_workbook):
         "pipeline": pipeline,
         "targets": targets,        # primary source: the 4 category files, multi-channel
         "targets_og": targets_og,  # fallback: old Targets tab, Shopify-only, all categories
+        "returns": returns,        # frozen monthly learning rows: Channel x L1 x Cat x Month (2026), sales_qty/return_qty
     }
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w") as f:
