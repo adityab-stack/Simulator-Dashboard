@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Snitch — Simulator and Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0F1210; --panel:#171B18; --panel-2:#1D2320; --line:#2A312C;
+    --amber:#E8A33D; --amber-dim:#8A6326; --thread:#4F7C6B;
+    --text:#EDEEE8; --text-dim:#9AA39B; --text-faint:#616B62;
+    --red:#C1594A; --green:#6FA383;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{ background:radial-gradient(1200px 600px at 10% -10%, #1A2019 0%, transparent 60%), var(--bg);
+        color:var(--text); font-family:'Inter', sans-serif; min-height:100vh; }
+  ::selection{ background:var(--amber); color:#111; }
+
+  header{ padding:24px 32px 18px; border-bottom:1px solid var(--line);
+          display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:16px; }
+  .brand{ display:flex; align-items:baseline; gap:14px; }
+  .brand .mark{ font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:24px; letter-spacing:-0.02em; }
+  .brand .mark span{ color:var(--amber); }
+  .brand .sub{ font-family:'IBM Plex Mono', monospace; font-size:12px; color:var(--text-dim); letter-spacing:0.04em; }
+  .meta-stamp{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--text-faint); text-align:right; }
+  .meta-stamp b{ color:var(--thread); }
+
+  .filter-rail{ display:flex; flex-wrap:wrap; gap:10px; padding:16px 32px; background:var(--panel);
+                border-bottom:1px solid var(--line); position:sticky; top:0; z-index:50; align-items:flex-end; }
+  .filter-group{ display:flex; flex-direction:column; gap:4px; min-width:126px; }
+  .filter-group label{ font-family:'IBM Plex Mono', monospace; font-size:10px; text-transform:uppercase;
+                        letter-spacing:0.08em; color:var(--text-faint); }
+  select{ background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:8px 10px;
+          border-radius:6px; font-size:13px; font-family:'Inter'; outline:none; cursor:pointer; }
+  select:focus{ border-color:var(--amber); }
+  .reset-btn{ background:transparent; border:1px solid var(--amber-dim); color:var(--amber); padding:8px 16px;
+              border-radius:6px; font-size:12px; cursor:pointer; font-family:'IBM Plex Mono', monospace; }
+  .reset-btn:hover{ background:var(--amber); color:#111; }
+  .toggle{ display:flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-left:auto; }
+  .toggle button{ background:var(--panel-2); border:none; color:var(--text-dim); padding:8px 18px; cursor:pointer;
+                   font-family:'IBM Plex Mono', monospace; font-size:12px; }
+  .toggle button.active{ background:var(--amber); color:#111; font-weight:600; }
+  .active-path{ font-family:'IBM Plex Mono', monospace; font-size:12px; color:var(--thread);
+                width:100%; padding-top:8px; }
+
+  main{ padding:24px 32px 60px; max-width:1800px; margin:0 auto; }
+
+  .kpi-row{ display:grid; grid-template-columns:repeat(5, 1fr); gap:12px; margin-bottom:30px; }
+  @media(max-width:1000px){ .kpi-row{ grid-template-columns:repeat(2,1fr);} }
+  .kpi{ background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; position:relative; overflow:hidden; }
+  .kpi::before{ content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--amber-dim); }
+  .kpi .label{ font-family:'IBM Plex Mono', monospace; font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-faint); }
+  .kpi .value{ font-family:'Space Grotesk', sans-serif; font-size:24px; font-weight:600; margin-top:6px; }
+  .kpi .sub{ font-size:11px; color:var(--text-dim); margin-top:4px; }
+
+  .card-section{ margin-bottom:36px; }
+  .card-section h2{ font-family:'Space Grotesk', sans-serif; font-size:15px; font-weight:600;
+                     display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .card-section h2 .rule{ flex:1; height:1px; background:var(--line); }
+  .card-section h2 .count{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--text-faint); font-weight:400; }
+
+  .pivot-strip{ display:flex; gap:14px; overflow-x:auto; padding-bottom:10px; }
+  .pivot-block{ background:var(--panel); border:1px solid var(--line); border-radius:10px;
+                padding:12px 14px; flex:0 0 auto; min-width:300px; }
+  .pivot-block h4{ font-family:'IBM Plex Mono', monospace; font-size:10px; text-transform:uppercase;
+                    letter-spacing:0.06em; color:var(--text-faint); margin-bottom:8px; }
+  .pivot-block h4.target-note{ color:var(--amber); }
+  .ptable{ border-collapse:collapse; }
+  .ptable th{ font-family:'IBM Plex Mono', monospace; font-size:10px; text-transform:uppercase;
+              color:var(--text-faint); padding:5px 8px; text-align:right; font-weight:500;
+              border-bottom:1px solid var(--line); }
+  .ptable th:first-child{ text-align:left; min-width:90px; }
+  .ptable td{ padding:5px 8px; font-family:'IBM Plex Mono', monospace; font-size:12px;
+              text-align:right; color:var(--text-dim); border-bottom:1px solid #1B2019; white-space:nowrap; }
+  .ptable td.rowlabel{ text-align:left; font-family:'Inter'; font-weight:500; color:var(--text); }
+  .ptable td.dash{ color:var(--text-faint); }
+  .ptable td.doi-cell{ padding:3px 6px; }
+  .doi-chip{ display:inline-block; width:100%; padding:3px 6px; border-radius:4px; text-align:right; font-size:11.5px; }
+  .doi-healthy{ background:rgba(111,163,131,0.22); color:var(--green); }
+  .doi-watch{ background:rgba(232,163,61,0.22); color:var(--amber); }
+  .doi-stuck{ background:rgba(193,89,74,0.28); color:var(--red); }
+  .doi-none{ color:var(--text-faint); background:transparent; }
+
+  .empty-note{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--text-faint); padding:10px 0; }
+
+  footer{ text-align:center; padding:24px; font-family:'IBM Plex Mono', monospace; font-size:11px;
+          color:var(--text-faint); border-top:1px solid var(--line); }
+  footer .warn{ color:var(--amber); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="mark">SNITCH <span>/</span> Simulator and Tracker </div>
+    <div class="sub">MONTH-ON-MONTH &middot; AUG&ndash;DEC 2026</div>
+  </div>
+  <div class="meta-stamp" id="stamp">Data as of —</div>
+</header>
+
+<div class="filter-rail">
+  <div class="filter-group"><label>Channel</label><select id="f-channel"><option value="ALL">All Channels</option></select></div>
+  <div class="filter-group"><label>L1</label><select id="f-l1"><option value="ALL">All L1</option></select></div>
+  <div class="filter-group"><label>Category</label><select id="f-cat"><option value="ALL">All Categories</option></select></div>
+  <div class="filter-group"><label>Meta 1</label><select id="f-m1"><option value="ALL">All Meta1</option></select></div>
+  <div class="filter-group"><label>Meta 2</label><select id="f-m2"><option value="ALL">All Meta2</option></select></div>
+  <div class="filter-group"><label>Meta 3</label><select id="f-m3"><option value="ALL">All Meta3</option></select></div>
+  <button class="reset-btn" id="reset">RESET</button>
+  <div class="toggle" id="metric-toggle">
+    <button data-metric="qty" class="active">QTY</button>
+    <button data-metric="cogs">COGS ₹</button>
+  </div>
+  <div class="active-path" id="active-path"></div>
+</div>
+
+<main>
+  <div class="kpi-row" id="kpi-row"></div>
+  <div id="cards-root"></div>
+</main>
+
+<footer>
+  Rebuilt from Google Sheets via <b style="color:var(--thread)">build_data.py</b> &middot; V1.2<br>
+  <span class="warn">Target = new category files (jeans/shirts/trousers/tshirts) where covered, else old Targets tab (Shopify only). Plan Closing still "—" until that file arrives.</span>
+</footer>
+
+<script>
+let DATA = null;
+let leafIndex = {};        // leafKey -> sorted array of inventory records
+let pipelineIndex = {};    // leafKey -> array of pipeline records
+let allLeafKeysByLC = {};  // "l1||cat" -> [leafKeys...] across the WHOLE dataset (for proration denominator)
+let metric = 'qty';
+
+const MONTHS = ['2026-08','2026-09','2026-10','2026-11','2026-12'];
+const PREV_MONTH = {'2026-08':'2026-07','2026-09':'2026-08','2026-10':'2026-09','2026-11':'2026-10','2026-12':'2026-11'};
+const MONTH_LABEL = {'2026-06':'Jun','2026-07':'Jul','2026-08':'Aug','2026-09':'Sep','2026-10':'Oct','2026-11':'Nov','2026-12':'Dec'};
+const CHANNEL_TO_INV_FIELD = {'Shopify':'online', 'Marketplace':'mp', 'Offline':'offline'};
+const LAST_MONTH = MONTHS[MONTHS.length - 1];
+const NEW_FILE_CATS = new Set(['jeans','shirts','trousers','tshirts']);
+
+const CARD_DEFS = [
+  {id:'l1',    title:'Break down by L1',                dims:['l1']},
+  {id:'l1cat', title:'Break down by L1 × Category',      dims:['l1','cat']},
+  {id:'cat',   title:'Break down by Category',           dims:['cat']},
+  {id:'catm1', title:'Break down by Category × Meta1',   dims:['cat','m1']},
+  {id:'m1',    title:'Break down by Meta1',              dims:['m1']},
+  {id:'m2',    title:'Break down by Meta2',               dims:['m2']},
+  {id:'m3',    title:'Break down by Meta3',               dims:['m3']},
+];
+
+function monthMinus(monthKey, n){
+  const [y, m] = monthKey.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 - n, 1));
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth()+1).padStart(2,'0');
+}
+function currentMonthKey(){
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+}
+
+fetch('data/data.json').then(r => r.json()).then(json => {
+  DATA = json;
+  document.getElementById('stamp').innerHTML = 'Data as of <b>' + new Date(json.generated_at).toLocaleString() + '</b>';
+  buildIndexes();
+  populateFilters();
+  render();
+});
+
+function leafKeyOf(r){ return [r.l1, r.cat, r.m1, r.m2, r.m3].map(v => v ?? '∅').join('|'); }
+
+function buildIndexes(){
+  DATA.inventory.forEach(r => {
+    const k = leafKeyOf(r);
+    (leafIndex[k] = leafIndex[k] || []).push(r);
+  });
+  Object.values(leafIndex).forEach(arr => arr.sort((a,b) => a.date.localeCompare(b.date)));
+
+  (DATA.pipeline || []).forEach(r => {
+    const k = leafKeyOf(r);
+    (pipelineIndex[k] = pipelineIndex[k] || []).push(r);
+  });
+
+  const allKeys = new Set([...Object.keys(leafIndex), ...Object.keys(pipelineIndex)]);
+  allKeys.forEach(k => {
+    const rec = (leafIndex[k] || pipelineIndex[k])[0];
+    const lcKey = rec.l1 + '||' + rec.cat;
+    (allLeafKeysByLC[lcKey] = allLeafKeysByLC[lcKey] || []).push(k);
+  });
+}
+
+function uniq(arr, key){ return [...new Set(arr.map(x => x[key]).filter(Boolean))].sort(); }
+
+function populateFilters(){
+  const s = DATA.sales;
+  fillSelect('f-channel', uniq(s,'channel'));
+  fillSelect('f-l1', uniq(s,'l1'));
+  fillSelect('f-cat', uniq(s,'cat'));
+  fillSelect('f-m1', uniq(s,'m1'));
+  fillSelect('f-m2', uniq(s,'m2'));
+  fillSelect('f-m3', uniq(s,'m3'));
+  ['f-channel','f-l1','f-cat','f-m1','f-m2','f-m3'].forEach(id =>
+    document.getElementById(id).addEventListener('change', render));
+  document.getElementById('reset').addEventListener('click', () => {
+    ['f-channel','f-l1','f-cat','f-m1','f-m2','f-m3'].forEach(id => document.getElementById(id).value = 'ALL');
+    render();
+  });
+  document.querySelectorAll('#metric-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#metric-toggle button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      metric = btn.dataset.metric;
+      render();
+    });
+  });
+}
+function fillSelect(id, values){
+  const sel = document.getElementById(id);
+  values.forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o); });
+}
+
+function getFilters(){
+  return {
+    channel: document.getElementById('f-channel').value,
+    l1: document.getElementById('f-l1').value,
+    cat: document.getElementById('f-cat').value,
+    m1: document.getElementById('f-m1').value,
+    m2: document.getElementById('f-m2').value,
+    m3: document.getElementById('f-m3').value,
+  };
+}
+function salesMatches(row, f){
+  if (f.channel !== 'ALL' && row.channel !== f.channel) return false;
+  if (f.l1 !== 'ALL' && row.l1 !== f.l1) return false;
+  if (f.cat !== 'ALL' && row.cat !== f.cat) return false;
+  if (f.m1 !== 'ALL' && row.m1 !== f.m1) return false;
+  if (f.m2 !== 'ALL' && row.m2 !== f.m2) return false;
+  if (f.m3 !== 'ALL' && row.m3 !== f.m3) return false;
+  return true;
+}
+function leafMatches(leafRec, f){
+  if (f.l1 !== 'ALL' && leafRec.l1 !== f.l1) return false;
+  if (f.cat !== 'ALL' && leafRec.cat !== f.cat) return false;
+  if (f.m1 !== 'ALL' && leafRec.m1 !== f.m1) return false;
+  if (f.m2 !== 'ALL' && leafRec.m2 !== f.m2) return false;
+  if (f.m3 !== 'ALL' && leafRec.m3 !== f.m3) return false;
+  return true;
+}
+
+function fmtNum(n){
+  if (n === null || n === undefined) return null;
+  const abs = Math.abs(n);
+  if (abs >= 1e7) return (n/1e7).toFixed(2)+'Cr';
+  if (abs >= 1e5) return (n/1e5).toFixed(2)+'L';
+  if (abs >= 1e3) return (n/1e3).toFixed(1)+'K';
+  return Math.round(n).toLocaleString();
+}
+
+// ---- Closing/Opening: latest dated snapshot within a month, per leaf ----
+function closingForLeaf(leafKey, monthKey, qtyField, valField){
+  const recs = leafIndex[leafKey];
+  if (!recs) return null;
+  let best = null;
+  for (const r of recs){ if (r.date.slice(0,7) === monthKey) best = r; }
+  if (!best) return null;
+  return { qty: best[qtyField] || 0, value: best[valField] || 0 };
+}
+function invFieldsForChannel(channel){
+  if (channel === 'ALL') return { qtyField: 'total_qty', valField: 'total_value' };
+  const key = CHANNEL_TO_INV_FIELD[channel];
+  return key ? { qtyField: key + '_qty', valField: key + '_value' } : { qtyField: 'total_qty', valField: 'total_value' };
+}
+
+// "Current Inv" proration weight -- the latest available snapshot for a leaf,
+// full stop, not bound to a specific month. Stands in for the static snapshot
+// number the original sheet used to split a Category target across Metas.
+function currentInvForLeaf(leafKey, qtyField, valField){
+  const recs = leafIndex[leafKey];
+  if (!recs || !recs.length) return 0;
+  const latest = recs[recs.length - 1];
+  return metric === 'qty' ? (latest[qtyField] || 0) : (latest[valField] || 0);
+}
+
+function inwardsForLeaf(leafKey, month){
+  const recs = pipelineIndex[leafKey];
+  if (!recs) return 0;
+  const cur = currentMonthKey();
+  const field = metric === 'qty' ? 'qty' : 'cogs_value';
+  let sum = 0;
+  if (month < cur){
+    sum = 0;
+  } else if (month === cur){
+    const window = [month, monthMinus(month,1), monthMinus(month,2)];
+    recs.forEach(r => { if (r.fdd_month && window.includes(r.fdd_month)) sum += r[field]; });
+  } else {
+    recs.forEach(r => { if (r.fdd_month === month) sum += r[field]; });
+  }
+  if (month === LAST_MONTH){
+    recs.forEach(r => { if (!r.fdd_month) sum += r[field]; });
+  }
+  return sum;
+}
+
+// ---- Target: new-file primary, OG-tab fallback (Shopify only), then proration ----
+function targetLCFromNewSource(channelFilter, l1, cat, month){
+  let sum = null;
+  (DATA.targets || []).forEach(r => {
+    if (r.l1 !== l1 || r.cat !== cat || r.month !== month) return;
+    if (channelFilter !== 'ALL' && r.channel !== channelFilter) return;
+    sum = (sum || 0) + r.qty;
+  });
+  return sum;
+}
+function targetLCFromOG(l1, cat, month){
+  let sum = null;
+  (DATA.targets_og || []).forEach(r => {
+    if (r.l1 === l1 && r.cat === cat && r.month === month){ sum = (sum||0) + r.qty; }
+  });
+  return sum;
+}
+function targetLC(channelFilter, l1, cat, month){
+  if (NEW_FILE_CATS.has(cat)){
+    return targetLCFromNewSource(channelFilter, l1, cat, month);
+  }
+  if (channelFilter === 'ALL' || channelFilter === 'Shopify'){
+    return targetLCFromOG(l1, cat, month);
+  }
+  return null; // OG fallback is Shopify-only, no data for other channels on uncovered categories
+}
+
+// Target for an arbitrary set of leaves (already filtered to the current card-group +
+// active filters), prorated per L1xCat bucket using each leaf's CurrentInv share.
+function targetForLeafSet(leafKeySet, channelFilter, month, qtyField, valField){
+  const byLC = {};
+  leafKeySet.forEach(lk => {
+    const rec = (leafIndex[lk] || pipelineIndex[lk])[0];
+    const key = rec.l1 + '||' + rec.cat;
+    (byLC[key] = byLC[key] || []).push(lk);
+  });
+  let total = null;
+  Object.entries(byLC).forEach(([key, leavesInGroup]) => {
+    const [l1, cat] = key.split('||');
+    const tLC = targetLC(channelFilter, l1, cat, month);
+    if (tLC === null) return;
+    const invGroup = leavesInGroup.reduce((a,lk) => a + currentInvForLeaf(lk, qtyField, valField), 0);
+    const allLeaves = allLeafKeysByLC[key] || [];
+    const invTotal = allLeaves.reduce((a,lk) => a + currentInvForLeaf(lk, qtyField, valField), 0);
+    if (invTotal === 0) return;
+    total = (total || 0) + tLC * (invGroup / invTotal);
+  });
+  return total;
+}
+
+function doiClass(doi){
+  if (doi === null || doi === undefined) return 'doi-none';
+  if (doi <= 45) return 'doi-healthy';
+  if (doi > 90) return 'doi-stuck';
+  return 'doi-watch';
+}
+
+function sumSales(rows, field){ return rows.reduce((a,r) => a + (r[field]||0), 0); }
+function groupKeyOf(row, dims){ return dims.map(d => row[d] ?? '∅').join(' | '); }
+
+function render(){
+  const f = getFilters();
+  document.getElementById('active-path').textContent =
+    'Filter: ' + ([f.channel, f.l1, f.cat, f.m1, f.m2, f.m3].filter(v => v !== 'ALL').join(' → ') || 'All data');
+
+  const sales = DATA.sales.filter(r => salesMatches(r, f));
+  const { qtyField, valField } = invFieldsForChannel(f.channel);
+  const allLeafKeys = new Set([...Object.keys(leafIndex), ...Object.keys(pipelineIndex)]);
+  const leafKeysMatchingFilter = [...allLeafKeys].filter(k => {
+    const recs = leafIndex[k] || pipelineIndex[k];
+    return recs.length && leafMatches(recs[0], f);
+  });
+
+  renderKPIs(sales, leafKeysMatchingFilter, qtyField, valField, f);
+  renderCards(sales, leafKeysMatchingFilter, f, qtyField, valField);
+}
+
+// Sequential simulation shared by KPIs and the pivot cards, strictly in month
+// order -- Closing(m) feeds Opening(m+1) whenever month m+1 has no real snapshot
+// of its own (i.e. every month except the current one, in practice).
+//   Opening(m)    = real snapshot within m, if one exists; else Closing(m-1)
+//   Sales Left(m) = MAX(0, Target(m) - Actual(m))
+//   Closing(m)    = Opening(m) + Inwards(m) - Sales Left(m)
+function computeLedger(entity, f, qtyField, valField){
+  const valKey = metric === 'qty' ? 'qty' : 'cogs_sold';
+  function realSnapshotAt(m){
+    let sum = null;
+    entity.leafKeys.forEach(lk => {
+      const c = closingForLeaf(lk, m, qtyField, valField);
+      if (c !== null) sum = (sum||0) + (metric==='qty' ? c.qty : c.value);
+    });
+    return sum;
+  }
+  function actualAt(m){
+    const matched = entity.salesRows.filter(x => x.month === m);
+    return matched.length ? sumSales(matched, valKey) : 0;
+  }
+  function targetAt(m){ return targetForLeafSet(entity.leafKeys, f.channel, m, qtyField, valField); }
+  function inwardsAt(m){ return entity.leafKeys.reduce((a,lk) => a + inwardsForLeaf(lk, m), 0); }
+
+  const opening = [], closing = [], salesLeft = [], target = [], actual = [], inwards = [];
+  for (let i = 0; i < MONTHS.length; i++){
+    const m = MONTHS[i];
+    target.push(targetAt(m));
+    actual.push(actualAt(m));
+    inwards.push(inwardsAt(m));
+
+    const real = realSnapshotAt(m);
+    const openVal = real !== null ? real : (i > 0 ? closing[i-1] : null);
+    opening.push(openVal);
+
+    const tgt = target[i];
+    const slVal = tgt !== null ? Math.max(0, tgt - actual[i]) : null;
+    salesLeft.push(slVal);
+
+    const closeVal = (openVal !== null && slVal !== null) ? (openVal + inwards[i] - slVal) : null;
+    closing.push(closeVal);
+  }
+  return { opening, closing, salesLeft, target, actual, inwards };
+}
+
+function renderKPIs(sales, leafKeys, qtyField, valField, f){
+  const salesQty = sumSales(sales, 'qty');
+  const salesCogs = sumSales(sales, 'cogs_sold');
+  const salesGross = sumSales(sales, 'gross_sales');
+
+  const ledger = computeLedger({ leafKeys, salesRows: sales }, f, qtyField, valField);
+  const totalTarget = ledger.target.reduce((a,v) => v!==null ? a+v : a, 0);
+  const anyTarget = ledger.target.some(v => v !== null);
+  const attain = (anyTarget && totalTarget) ? (salesQty / totalTarget * 100) : null;
+
+  let lastMonthIdx = -1;
+  for (let i = 0; i < MONTHS.length; i++){ if (ledger.closing[i] !== null) lastMonthIdx = i; }
+  const closingQty = lastMonthIdx >= 0 ? ledger.closing[lastMonthIdx] : null;
+  const targetAtLastMonth = lastMonthIdx >= 0 ? ledger.target[lastMonthIdx] : null;
+  const doi = (closingQty !== null && targetAtLastMonth) ? (closingQty * 30 / targetAtLastMonth) : null;
+  const gm = salesGross ? ((salesGross - salesCogs) / salesGross * 100) : null;
+
+  const kpis = [
+    {label:'Sales Qty (Aug–Dec)', value: fmtNum(salesQty), sub: sales.length+' line items'},
+    {label:'Sales COGS Value', value: '₹'+fmtNum(salesCogs), sub: 'gross ₹'+fmtNum(salesGross)},
+    {label:'Target Attainment', value: attain!==null ? attain.toFixed(1)+'%' : '—',
+     sub: anyTarget ? fmtNum(totalTarget)+' units target' : 'no target for this slice yet'},
+    {label:'Closing (simulated)', value: closingQty!==null ? fmtNum(closingQty)+' u' : '—', sub: lastMonthIdx>=0 ? 'as of '+MONTH_LABEL[MONTHS[lastMonthIdx]] : 'no data yet'},
+    {label:'DOI (Closing/Target×30)', value: doi!==null ? doi.toFixed(0)+'d' : '—', sub: gm!==null ? 'GM '+gm.toFixed(1)+'%' : ''},
+  ];
+  document.getElementById('kpi-row').innerHTML = kpis.map(k =>
+    `<div class="kpi"><div class="label">${k.label}</div><div class="value">${k.value}</div><div class="sub">${k.sub}</div></div>`
+  ).join('');
+}
+
+function renderCards(sales, leafKeys, f, qtyField, valField){
+  const root = document.getElementById('cards-root');
+  root.innerHTML = '';
+
+  CARD_DEFS.forEach(def => {
+    const entities = {};
+    sales.forEach(r => {
+      if (def.dims.every(d => r[d] == null)) return;
+      const gk = groupKeyOf(r, def.dims);
+      if (!entities[gk]) entities[gk] = { label: def.dims.map(d => r[d] ?? '(none)').join(' × '), salesRows: [], leafKeys: [] };
+      entities[gk].salesRows.push(r);
+    });
+    leafKeys.forEach(lk => {
+      const rec = (leafIndex[lk] || pipelineIndex[lk])[0];
+      if (def.dims.every(d => rec[d] == null)) return;
+      const gk = def.dims.map(d => rec[d] ?? '∅').join(' | ');
+      if (!entities[gk]) entities[gk] = { label: def.dims.map(d => rec[d] ?? '(none)').join(' × '), salesRows: [], leafKeys: [] };
+      entities[gk].leafKeys.push(lk);
+    });
+
+    const rows = Object.values(entities).sort((a,b) => sumSales(b.salesRows,'gross_sales') - sumSales(a.salesRows,'gross_sales'));
+
+    const section = document.createElement('div');
+    section.className = 'card-section';
+    section.innerHTML = `<h2>${def.title} <span class="rule"></span> <span class="count">${rows.length} shown</span></h2>`;
+
+    if (rows.length === 0){
+      const p = document.createElement('div');
+      p.className = 'empty-note';
+      p.textContent = 'No rows match the current filter at this level.';
+      section.appendChild(p);
+    } else {
+      section.appendChild(buildPivotStrip(rows, f, qtyField, valField));
+    }
+    root.appendChild(section);
+  });
+}
+
+function pivotBlock(title, rows, cellFn, opts={}){
+  const rowsHtml = rows.map(r => {
+    const cells = MONTHS.map((m,i) => cellFn(r, m, i)).join('');
+    return `<tr><td class="rowlabel">${r.label}</td>${cells}</tr>`;
+  }).join('');
+  return `
+    <div class="pivot-block">
+      <h4 class="${opts.note ? 'target-note' : ''}">${title}</h4>
+      <table class="ptable">
+        <thead><tr><th>Entity</th>${MONTHS.map(m=>`<th>${MONTH_LABEL[m]}</th>`).join('')}</tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>`;
+}
+
+function buildPivotStrip(rows, f, qtyField, valField){
+  const ledgers = new Map();
+  rows.forEach(r => ledgers.set(r, computeLedger(r, f, qtyField, valField)));
+
+  function numCell(v){ return v === null || v === undefined ? `<td class="dash">—</td>` : `<td>${fmtNum(v)}</td>`; }
+  function doiCell(r, i){
+    const l = ledgers.get(r);
+    const c = l.closing[i], t = l.target[i];
+    if (c === null || !t) return `<td class="doi-cell"><span class="doi-chip doi-none">—</span></td>`;
+    const doi = c * 30 / t;
+    return `<td class="doi-cell"><span class="doi-chip ${doiClass(doi)}">${doi.toFixed(0)}d</span></td>`;
+  }
+
+  const strip = document.createElement('div');
+  strip.className = 'pivot-strip';
+  strip.innerHTML =
+    pivotBlock('Opening', rows, (r,m,i) => numCell(ledgers.get(r).opening[i])) +
+    pivotBlock('Sales (Actual)', rows, (r,m,i) => numCell(ledgers.get(r).actual[i])) +
+    pivotBlock('Sales Target', rows, (r,m,i) => numCell(ledgers.get(r).target[i]), {note:true}) +
+    pivotBlock('Sales Left', rows, (r,m,i) => numCell(ledgers.get(r).salesLeft[i]), {note:true}) +
+    pivotBlock('Inwards', rows, (r,m,i) => numCell(ledgers.get(r).inwards[i])) +
+    pivotBlock('Closing (simulated)', rows, (r,m,i) => numCell(ledgers.get(r).closing[i])) +
+    pivotBlock('DOI (Closing/Target×30)', rows, (r,m,i) => doiCell(r,i), {note:true});
+  return strip;
+}
+</script>
+
+</body>
+</html>
