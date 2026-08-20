@@ -63,7 +63,13 @@ MONTH_COL_MAP = {
 # normalize target's channel labels to match Sales' channel naming where they're
 # clearly the same thing; Warehouse kept as its own distinct channel since Sales
 # doesn't have an equivalent yet. MP-SOR merged into Marketplace per instruction.
-TARGET_CHANNEL_MAP = {"Online - Shopify": "Shopify", "MP-SOR": "Marketplace"}
+TARGET_CHANNEL_MAP = {"Online - Shopify": "Shopify"}
+# NOTE: MP-SOR deliberately kept distinct from Marketplace here (not merged),
+# per instruction -- the channel-mix split treats them as separate percentages.
+# The live dashboard's "Marketplace" filter still sums MP + MP-SOR together at
+# query time (same as it already does for Sales), so nothing visible changes.
+
+NEW_TOTAL_FILE = os.path.join(HERE, "data", "targets_new_total.xlsx")
 
 
 # ---------------------------------------------------------------------------
@@ -188,11 +194,11 @@ def build_returns():
     return learned
 
 
-def build_targets():
-    """Reads the 4 category target files from data/targets/, aggregates away
-    Branch/State/Store-Opening-Date/ASP-Bin (V1.2 territory) down to
-    Channel x L1 x Cat x Meta1 x Meta2 x Meta3 x Month."""
-    agg = {}
+def build_channel_mix_pct():
+    """Computes OLD channel-mix % per (L1, Category, Month) from the 4
+    Planned_Qty_only files -- summed across Meta/ASP-Bin/store, kept distinct
+    per Channel (Warehouse excluded, not a sales channel)."""
+    old_qty = {}  # (l1, cat, channel, month) -> qty
     any_found = False
     for fname in TARGET_FILES:
         path = os.path.join(TARGETS_DIR, fname)
@@ -210,13 +216,10 @@ def build_targets():
                 continue
             l1 = row[col_idx["L1_CATEGORY"]]
             if l1 is None or l1 == "L1_CATEGORY":
-                continue  # stray repeated header row found in the source
-            cat = row[col_idx["CATEGORY"]]
-            m1 = row[col_idx["META1"]]
-            m2 = row[col_idx["META2"]]
-            m3 = row[col_idx["META3"]]
+                continue
+            cat = (row[col_idx["CATEGORY"]] or "").strip().lower()
             channel_raw = row[col_idx["type"]]
-            if channel_raw is None or channel_raw == "type":
+            if channel_raw is None or channel_raw == "type" or channel_raw == "Warehouse":
                 continue
             channel = TARGET_CHANNEL_MAP.get(channel_raw, channel_raw)
             for col_name, month_iso in MONTH_COL_MAP.items():
@@ -224,20 +227,81 @@ def build_targets():
                 if idx is None:
                     continue
                 val = row[idx] or 0
-                # NOTE: deliberately NOT keyed by m1/m2/m3 -- target files use a
-                # different meta taxonomy than Sales/CI/Pipeline today (e.g. shirts
-                # target meta1 is fabric-type like "Poplin"/"Denim", Sales meta1 is
-                # "cotton"/"polyester"/"linen"). Splitting a category target across
-                # metas that don't line up would silently misstate attainment, so
-                # V1.1 keeps targets at Channel x L1 x Category x Month only.
-                key = (channel, l1, cat, month_iso)
-                agg[key] = agg.get(key, 0) + val
+                key = (l1, cat, channel, month_iso)
+                old_qty[key] = old_qty.get(key, 0) + val
         wb.close()
     if not any_found:
-        print("NOTE: no target files found in data/targets/ -- Target rows will show '--'.")
+        print("NOTE: no target files found in data/targets/ -- cannot compute channel mix.")
+        return {}
+
+    # totals per (l1, cat, month) across all channels
+    totals = {}
+    for (l1, cat, channel, month), qty in old_qty.items():
+        tkey = (l1, cat, month)
+        totals[tkey] = totals.get(tkey, 0) + qty
+
+    pct = {}
+    for (l1, cat, channel, month), qty in old_qty.items():
+        total = totals.get((l1, cat, month), 0)
+        if total > 0:
+            pct[(l1, cat, channel, month)] = qty / total
+    return pct
+
+
+def build_new_totals():
+    """Reads data/targets_new_total.xlsx (the new all-channel-combined Planned
+    Qty numbers), aggregating away Meta1/2/3 and ASP Bin (ASP is parked for now)
+    down to L1 x Category x Month."""
+    if not os.path.exists(NEW_TOTAL_FILE):
+        print("NOTE: data/targets_new_total.xlsx not found -- no new target totals to apply.")
+        return {}
+    wb = openpyxl.load_workbook(NEW_TOTAL_FILE, data_only=True, read_only=True)
+    ws = wb[wb.sheetnames[0]]
+    col_idx = None
+    NEW_MONTH_COLS = {
+        "Planned Qty AUG'26": "2026-08", "Planned Qty SEP'26": "2026-09",
+        "Planned Qty OCT'26": "2026-10", "Planned Qty NOV'26": "2026-11",
+        "Planned Qty DEC'26": "2026-12",
+    }
+    totals = {}
+    for row in ws.iter_rows(values_only=True):
+        if col_idx is None:
+            if row and "Category" in row and "L1" in row:
+                col_idx = {name: i for i, name in enumerate(row)}
+            continue
+        cat_raw = row[col_idx["Category"]]
+        if cat_raw is None:
+            continue
+        cat = str(cat_raw).strip().lower()
+        l1 = row[col_idx["L1"]]
+        for col_name, month_iso in NEW_MONTH_COLS.items():
+            idx = col_idx.get(col_name)
+            if idx is None:
+                continue
+            val = row[idx] or 0
+            key = (l1, cat, month_iso)
+            totals[key] = totals.get(key, 0) + val
+    return totals
+
+
+def build_targets():
+    """New target logic: preserves the OLD channel-mix % (from the 4
+    Planned_Qty_only files) and applies it to the NEW total (from
+    data/targets_new_total.xlsx), per L1 x Category x Month. The old files
+    are now used only to derive the split ratio, not as target values
+    themselves -- the new file's totals are authoritative."""
+    pct = build_channel_mix_pct()
+    new_totals = build_new_totals()
+
     targets = []
-    for (channel, l1, cat, month), qty in agg.items():
-        targets.append({"channel": channel, "l1": l1, "cat": cat, "month": month, "qty": qty})
+    for (l1, cat, month), new_total in new_totals.items():
+        matching_channels = [k for k in pct if k[0] == l1 and k[1] == cat and k[3] == month]
+        if not matching_channels:
+            continue  # no old channel-mix data for this L1+Cat+Month -- can't split honestly
+        for key in matching_channels:
+            _, _, channel, _ = key
+            share = pct[key]
+            targets.append({"channel": channel, "l1": l1, "cat": cat, "month": month, "qty": new_total * share})
     return targets
 
 
