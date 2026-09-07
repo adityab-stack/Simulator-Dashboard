@@ -53,6 +53,11 @@ import openpyxl
 # old days automatically age out of the window as time moves forward.
 ROLLING_WINDOW_DAYS = 400
 ROLLING_CUTOFF_DATE = (datetime.date.today() - datetime.timedelta(days=ROLLING_WINDOW_DAYS)).isoformat()
+# Separate, much shorter window for "L30D" (last 30 days) figures used by the
+# Repeat Evaluation tab -- these need a TRUE trailing-30-day number, not a
+# monthly-grain approximation, so they get their own tiny bounded query.
+L30D_WINDOW_DAYS = 30
+L30D_CUTOFF_DATE = (datetime.date.today() - datetime.timedelta(days=L30D_WINDOW_DAYS)).isoformat()
 
 SHEET_ID = "1PqtpL9w2Tneon_-6zz7BGiW5YUz4fhDCrgn687r_CZw"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -263,6 +268,472 @@ RETURNS_BY_SKU_QUERY = f"""
 """
 
 # ---------------------------------------------------------------------------
+# Snowflake: LIFETIME per-SKU inwards from actual warehouse putaway events
+# (not the planning-stage Pipeline sheet). Deliberately NOT bounded by
+# ROLLING_CUTOFF_DATE -- "lifetime" means true all-time totals per Aditya, and
+# since this aggregates all the way down to ONE ROW PER SKU in SQL, the output
+# stays tiny regardless of how much history exists (no file-size risk like the
+# earlier day-level datasets had).
+#
+# "Latest Inward Date/Qty" specifically means the most recent event with
+# qty >= 50 -- a <=50-unit putaway is treated as a partial/incomplete trickle,
+# not a real completed restock, per Aditya. Lifetime Qty/Value totals are NOT
+# subject to that >=50 floor (every real event >=20 units, per the query's own
+# HAVING clause, counts toward lifetime totals).
+#
+# NOTE: this only tells us what's been RECEIVED into the warehouse, not
+# current on-hand stock (sales/returns/damages/transfers all also move that
+# number) -- "Current Inv" and SKU-level DOI remain unavailable until a real
+# on-hand-stock-by-SKU source exists. Not approximated here; flagged instead.
+INWARDS_BY_SKU_QUERY = r"""
+WITH raw AS (
+    SELECT
+        UPPER(TRIM(REVERSE(SUBSTRING(REVERSE("Item Type skuCode"), CHARINDEX('-', REVERSE("Item Type skuCode")) + 1, LEN("Item Type skuCode"))))) AS sku_group,
+        "PUTAWAY_UPDATED"::DATE AS inward_date,
+        SUM("PUTAWAY_COMPLETED_QUANTITY") AS qty
+    FROM snitch_db.maplemonk.putaway_tracking
+    WHERE LOWER(FINAL_TYPE) LIKE 'new%'
+    GROUP BY 1, 2
+    HAVING SUM("PUTAWAY_COMPLETED_QUANTITY") >= 20
+),
+meta_map AS (
+    SELECT
+        UPPER(
+            IFF(
+                UPPER(REPLACE(a.SKU_GROUP, ' ', '')) LIKE 'MP%'
+                OR UPPER(REPLACE(a.SKU_GROUP, ' ', '')) LIKE '4C-%',
+                REGEXP_REPLACE(REPLACE(a.SKU_GROUP, ' ', ''), '^([^-]+-[^-]+).*$', '\1'),
+                REGEXP_REPLACE(REPLACE(a.SKU_GROUP, ' ', ''), '-.*$', '')
+            )
+        ) AS sku_group_clean,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.l1_category)) = 'LONG TAIL' THEN a.l1_category END),
+            MIN(CASE WHEN UPPER(TRIM(a.l1_category)) = 'PLUS' THEN a.l1_category END),
+            MIN(CASE WHEN UPPER(TRIM(a.l1_category)) = 'LUXE' THEN a.l1_category END),
+            MIN(CASE WHEN UPPER(TRIM(a.l1_category)) = 'SNITCH' THEN a.l1_category END),
+            MIN(a.l1_category)
+        ) AS l1_category,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'SHIRTS' THEN a.category END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TSHIRTS' THEN a.category END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'JEANS' THEN a.category END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TROUSERS' THEN a.category END),
+            MIN(a.category)
+        ) AS category,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'SHIRTS' THEN a.meta1 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TSHIRTS' THEN a.meta1 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'JEANS' THEN a.meta1 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TROUSERS' THEN a.meta1 END),
+            MIN(a.meta1)
+        ) AS meta1,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'SHIRTS' THEN a.meta2 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TSHIRTS' THEN a.meta2 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'JEANS' THEN a.meta2 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TROUSERS' THEN a.meta2 END),
+            MIN(a.meta2)
+        ) AS meta2,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'SHIRTS' THEN a.meta3 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TSHIRTS' THEN a.meta3 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'JEANS' THEN a.meta3 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TROUSERS' THEN a.meta3 END),
+            MIN(a.meta3)
+        ) AS meta3,
+        MAX(a.cogs) AS cogs
+    FROM snitch_db.maplemonk.meta_mapping_cogs_sku_2 a
+    GROUP BY 1
+),
+joined AS (
+    SELECT r.sku_group, r.inward_date, r.qty,
+           m.l1_category, m.category, m.meta1, m.meta2, m.meta3, m.cogs
+    FROM raw r
+    LEFT JOIN meta_map m ON UPPER(
+            IFF(
+                UPPER(REPLACE(r.sku_group, ' ', '')) LIKE 'MP%'
+                OR UPPER(REPLACE(r.sku_group, ' ', '')) LIKE '4C-%',
+                REGEXP_REPLACE(REPLACE(r.sku_group, ' ', ''), '^([^-]+-[^-]+).*$', '\1'),
+                REGEXP_REPLACE(REPLACE(r.sku_group, ' ', ''), '-.*$', '')
+            )
+        ) = m.sku_group_clean
+),
+lifetime AS (
+    SELECT
+        sku_group,
+        MAX(l1_category) AS l1, MAX(category) AS cat,
+        MAX(meta1) AS m1, MAX(meta2) AS m2, MAX(meta3) AS m3,
+        SUM(qty) AS lifetime_qty,
+        SUM(qty * COALESCE(cogs, 0)) AS lifetime_cogs_value
+    FROM joined
+    GROUP BY sku_group
+),
+latest AS (
+    SELECT sku_group, inward_date AS latest_inward_date, qty AS latest_inward_qty
+    FROM joined
+    WHERE qty >= 50
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY sku_group ORDER BY inward_date DESC) = 1
+)
+SELECT
+    lifetime.sku_group, lifetime.l1, lifetime.cat, lifetime.m1, lifetime.m2, lifetime.m3,
+    lifetime.lifetime_qty, lifetime.lifetime_cogs_value,
+    latest.latest_inward_date, latest.latest_inward_qty
+FROM lifetime
+LEFT JOIN latest ON lifetime.sku_group = latest.sku_group
+"""
+
+# ---------------------------------------------------------------------------
+# Snowflake: individual inward EVENTS per SKU (not collapsed to lifetime/
+# latest like INWARDS_BY_SKU_QUERY above) -- needed for the Repeat Evaluation
+# tab's Reorder-vs-Repeat classification, which has to look at the actual
+# sequence and spacing of events, not just the total or the most recent one.
+# Only real restocks (>=50 units, same floor as "Latest Inward" elsewhere)
+# count as a qualifying event here -- a SKU with only <50-unit trickles has
+# NO qualifying events and won't be classified as Reorder/Repeat at all.
+# One row per (sku_group, inward_date) -- small (a handful of events per SKU
+# over its lifetime), no per-day/per-SKU blowup risk.
+# ---------------------------------------------------------------------------
+INWARD_EVENTS_BY_SKU_QUERY = r"""
+SELECT
+    UPPER(TRIM(REVERSE(SUBSTRING(REVERSE("Item Type skuCode"), CHARINDEX('-', REVERSE("Item Type skuCode")) + 1, LEN("Item Type skuCode"))))) AS sku_group,
+    "PUTAWAY_UPDATED"::DATE AS inward_date,
+    SUM("PUTAWAY_COMPLETED_QUANTITY") AS qty
+FROM snitch_db.maplemonk.putaway_tracking
+WHERE LOWER(FINAL_TYPE) LIKE 'new%'
+GROUP BY 1, 2
+HAVING SUM("PUTAWAY_COMPLETED_QUANTITY") >= 50
+ORDER BY 1, 2
+"""
+
+# ---------------------------------------------------------------------------
+# Snowflake: TRUE lifetime per-SKU sales totals (one row per SKU, no date
+# bound) -- needed for the Repeat Evaluation tab's "Total Sold" column, which
+# is explicitly a lifetime figure, not the rolling ~13-month window that
+# sales_by_sku.json uses. Aggregates fully in SQL to one row per SKU, so this
+# stays tiny regardless of history length (same safe pattern as
+# INWARDS_BY_SKU_QUERY's lifetime totals).
+# ---------------------------------------------------------------------------
+LIFETIME_SALES_BY_SKU_QUERY = """
+SELECT
+    SKU_GROUP,
+    SUM(QTY) AS lifetime_qty_sold,
+    SUM(GROSS_SALES_VALUE) AS lifetime_gross_sales,
+    SUM(COGS_SOLD) AS lifetime_cogs_sold,
+    MIN(DATE) AS first_sale_date
+FROM SNITCH_DB.MAPLEMONK.SALES_FOR_AUTO_3
+GROUP BY SKU_GROUP
+"""
+
+# TRUE lifetime per-SKU returns (one row per SKU, no date bound) -- companion
+# to LIFETIME_SALES_BY_SKU_QUERY above, same rationale.
+LIFETIME_RETURNS_BY_SKU_QUERY = """
+SELECT
+    SKU_GROUP,
+    SUM(OVERALL_RETURNS_QTY) AS lifetime_return_qty
+FROM SNITCH_DB.MAPLEMONK.RETURNS_DATA
+GROUP BY SKU_GROUP
+"""
+
+# ---------------------------------------------------------------------------
+# L30D (true trailing-30-day, NOT monthly-grain) sales and returns per SKU,
+# for the Repeat Evaluation tab. Bounded by L30D_CUTOFF_DATE (computed fresh
+# from today every run) -- stays tiny and never grows, same pattern as the
+# main rolling-window queries just with a much shorter window.
+# ---------------------------------------------------------------------------
+L30D_SALES_BY_SKU_QUERY = f"""
+SELECT
+    SKU_GROUP,
+    SUM(QTY) AS l30d_qty_sold,
+    SUM(GROSS_SALES_VALUE) AS l30d_gross_sales,
+    SUM(COGS_SOLD) AS l30d_cogs_sold
+FROM SNITCH_DB.MAPLEMONK.SALES_FOR_AUTO_3
+WHERE DATE >= '{L30D_CUTOFF_DATE}'
+GROUP BY SKU_GROUP
+"""
+
+L30D_RETURNS_BY_SKU_QUERY = f"""
+SELECT
+    SKU_GROUP,
+    SUM(OVERALL_RETURNS_QTY) AS l30d_return_qty
+FROM SNITCH_DB.MAPLEMONK.RETURNS_DATA
+WHERE DATE >= '{L30D_CUTOFF_DATE}'
+GROUP BY SKU_GROUP
+"""
+
+# ---------------------------------------------------------------------------
+# F30D ("First 30 Days since first sale", NOT trailing-from-today like L30D)
+# per-SKU sales -- for the Fresh SKU Reorder engine's F30DsROS metric. Uses a
+# self-join against each SKU's own MIN(date) rather than a fixed calendar
+# cutoff, since "first 30 days" is relative to when each SKU individually
+# launched, not a shared date.
+# ---------------------------------------------------------------------------
+F30D_SALES_BY_SKU_QUERY = """
+WITH first_sale AS (
+    SELECT SKU_GROUP, MIN(DATE) AS first_sale_date
+    FROM SNITCH_DB.MAPLEMONK.SALES_FOR_AUTO_3
+    GROUP BY SKU_GROUP
+)
+SELECT
+    s.SKU_GROUP,
+    SUM(s.QTY) AS f30d_qty_sold,
+    SUM(s.GROSS_SALES_VALUE) AS f30d_gross_sales,
+    SUM(s.COGS_SOLD) AS f30d_cogs_sold
+FROM SNITCH_DB.MAPLEMONK.SALES_FOR_AUTO_3 s
+JOIN first_sale f ON s.SKU_GROUP = f.SKU_GROUP
+WHERE s.DATE BETWEEN f.first_sale_date AND DATEADD(day, 29, f.first_sale_date)
+GROUP BY s.SKU_GROUP
+"""
+
+# Closing inventory at the END of each SKU's own first-30-day window (nearest
+# available daily_fifo_ageing snapshot on or before day 29) -- this is the
+# denominator half of FPSTR (First-Period Sell-Through %), computed the same
+# way STR% is computed everywhere else in this dashboard (qty sold / (qty
+# sold + closing inv)), just anchored to first-30-days instead of a calendar
+# month.
+F30D_CLOSING_INV_BY_SKU_QUERY = """
+WITH first_sale AS (
+    SELECT SKU_GROUP, MIN(DATE) AS first_sale_date
+    FROM SNITCH_DB.MAPLEMONK.SALES_FOR_AUTO_3
+    GROUP BY SKU_GROUP
+),
+ranked AS (
+    SELECT
+        d.sku_group, d.inv_current,
+        ROW_NUMBER() OVER (
+            PARTITION BY d.sku_group
+            ORDER BY DATEDIFF(day, d.date, DATEADD(day, 29, f.first_sale_date))
+        ) AS rn
+    FROM snitch_db.maplemonk.daily_fifo_ageing d
+    JOIN first_sale f ON d.sku_group = f.SKU_GROUP
+    WHERE d.date <= DATEADD(day, 29, f.first_sale_date)
+)
+SELECT sku_group, inv_current AS f30d_closing_inv
+FROM ranked
+WHERE rn = 1
+"""
+
+
+def fetch_f30d_sales_by_sku_from_snowflake():
+    """First-30-days-since-launch per-SKU sales -- see F30D_SALES_BY_SKU_QUERY."""
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print("Fetching f30d_sales_by_sku (first 30 days since launch) from SALES_FOR_AUTO_3...")
+        cur.execute(F30D_SALES_BY_SKU_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        sku_group, qty, gross, cogs = row
+        if not sku_group:
+            continue
+        out.append({
+            "sku_group": sku_group,
+            "f30d_qty_sold": float(qty or 0),
+            "f30d_gross_sales": float(gross or 0),
+            "f30d_cogs_sold": float(cogs or 0),
+        })
+    print(f"  -> {len(out)} f30d_sales_by_sku rows from Snowflake")
+    return out
+
+
+def fetch_f30d_closing_inv_by_sku_from_snowflake():
+    """Closing inv at end of each SKU's own first-30-day window -- see
+    F30D_CLOSING_INV_BY_SKU_QUERY."""
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print("Fetching f30d_closing_inv_by_sku from daily_fifo_ageing...")
+        cur.execute(F30D_CLOSING_INV_BY_SKU_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        sku_group, inv = row
+        if not sku_group:
+            continue
+        out.append({"sku_group": sku_group, "f30d_closing_inv": float(inv or 0)})
+    print(f"  -> {len(out)} f30d_closing_inv_by_sku rows from Snowflake")
+    return out
+
+# ---------------------------------------------------------------------------
+# Per-SKU QUARTERLY sales, fixed from Q1 2025 (2025-01-01) forward -- NOT tied
+# to the rolling ROLLING_CUTOFF_DATE (~400 days back), because the Repeat
+# Evaluation tab needs a stable "since Q1 2025" view regardless of how far
+# back the main rolling window happens to reach on any given day. Aggregated
+# straight to (sku_group, quarter) in SQL -- much smaller than the monthly
+# sales_by_sku dataset, and safe to keep growing one quarter at a time.
+# ---------------------------------------------------------------------------
+SALES_BY_SKU_QUARTERLY_SINCE_2025_QUERY = """
+SELECT
+    SKU_GROUP,
+    YEAR(DATE) AS yr,
+    CEIL(MONTH(DATE) / 3.0) AS qtr,
+    SUM(QTY) AS qty,
+    SUM(GROSS_SALES_VALUE) AS gross_sales,
+    SUM(COGS_SOLD) AS cogs_sold
+FROM SNITCH_DB.MAPLEMONK.SALES_FOR_AUTO_3
+WHERE DATE >= '2025-01-01'
+GROUP BY SKU_GROUP, YEAR(DATE), CEIL(MONTH(DATE) / 3.0)
+"""
+
+
+def fetch_sales_by_sku_quarterly_since_2025_from_snowflake():
+    """Per-SKU quarterly sales, fixed Q1 2025 -> latest -- see
+    SALES_BY_SKU_QUARTERLY_SINCE_2025_QUERY comment."""
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print("Fetching sales_by_sku_quarterly (since 2025-Q1) from SALES_FOR_AUTO_3...")
+        cur.execute(SALES_BY_SKU_QUARTERLY_SINCE_2025_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        sku_group, yr, qtr, qty, gross, cogs = row
+        if not sku_group:
+            continue
+        out.append({
+            "sku_group": sku_group,
+            "quarter": f"{int(yr)}-Q{int(qtr)}",
+            "qty": float(qty or 0),
+            "gross_sales": float(gross or 0),
+            "cogs_sold": float(cogs or 0),
+        })
+    print(f"  -> {len(out)} sales_by_sku_quarterly rows from Snowflake")
+    return out
+
+
+
+def fetch_inward_events_by_sku_from_snowflake():
+    """All individual >=50-unit inward events per SKU (not collapsed) -- for
+    Repeat Evaluation's Reorder/Repeat classification. See
+    INWARD_EVENTS_BY_SKU_QUERY comment."""
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print("Fetching inward_events_by_sku (>=50 unit events) from putaway_tracking...")
+        cur.execute(INWARD_EVENTS_BY_SKU_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+    events = []
+    for row in rows:
+        sku_group, inward_date, qty = row
+        if not sku_group:
+            continue
+        events.append({
+            "sku_group": sku_group,
+            "inward_date": inward_date.strftime("%Y-%m-%d") if inward_date else None,
+            "qty": float(qty or 0),
+        })
+    print(f"  -> {len(events)} inward_events_by_sku rows from Snowflake")
+    return events
+
+
+def fetch_lifetime_sales_by_sku_from_snowflake():
+    """TRUE lifetime per-SKU sales totals -- see LIFETIME_SALES_BY_SKU_QUERY."""
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print("Fetching lifetime_sales_by_sku from SALES_FOR_AUTO_3...")
+        cur.execute(LIFETIME_SALES_BY_SKU_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        sku_group, qty, gross, cogs, first_sale = row
+        if not sku_group:
+            continue
+        out.append({
+            "sku_group": sku_group,
+            "lifetime_qty_sold": float(qty or 0),
+            "lifetime_gross_sales": float(gross or 0),
+            "lifetime_cogs_sold": float(cogs or 0),
+            "first_sale_date": first_sale.strftime("%Y-%m-%d") if first_sale else None,
+        })
+    print(f"  -> {len(out)} lifetime_sales_by_sku rows from Snowflake")
+    return out
+
+
+def fetch_lifetime_returns_by_sku_from_snowflake():
+    """TRUE lifetime per-SKU return qty -- see LIFETIME_RETURNS_BY_SKU_QUERY."""
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print("Fetching lifetime_returns_by_sku from RETURNS_DATA...")
+        cur.execute(LIFETIME_RETURNS_BY_SKU_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        sku_group, qty = row
+        if not sku_group:
+            continue
+        out.append({"sku_group": sku_group, "lifetime_return_qty": float(qty or 0)})
+    print(f"  -> {len(out)} lifetime_returns_by_sku rows from Snowflake")
+    return out
+
+
+def fetch_l30d_sales_by_sku_from_snowflake():
+    """True trailing-30-day per-SKU sales -- see L30D_SALES_BY_SKU_QUERY."""
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print(f"Fetching l30d_sales_by_sku (since {L30D_CUTOFF_DATE}) from SALES_FOR_AUTO_3...")
+        cur.execute(L30D_SALES_BY_SKU_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        sku_group, qty, gross, cogs = row
+        if not sku_group:
+            continue
+        out.append({
+            "sku_group": sku_group,
+            "l30d_qty_sold": float(qty or 0),
+            "l30d_gross_sales": float(gross or 0),
+            "l30d_cogs_sold": float(cogs or 0),
+        })
+    print(f"  -> {len(out)} l30d_sales_by_sku rows from Snowflake")
+    return out
+
+
+def fetch_l30d_returns_by_sku_from_snowflake():
+    """True trailing-30-day per-SKU return qty -- see L30D_RETURNS_BY_SKU_QUERY."""
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print(f"Fetching l30d_returns_by_sku (since {L30D_CUTOFF_DATE}) from RETURNS_DATA...")
+        cur.execute(L30D_RETURNS_BY_SKU_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        sku_group, qty = row
+        if not sku_group:
+            continue
+        out.append({"sku_group": sku_group, "l30d_return_qty": float(qty or 0)})
+    print(f"  -> {len(out)} l30d_returns_by_sku rows from Snowflake")
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Snowflake: one representative image URL per sku_group, for the Pareto /
 # Quartile tabs (thumbnail next to each ranked SKU group). Picks the first
 # IMAGE-type media (by media index) per sku_group across all its variants.
@@ -386,6 +857,464 @@ def fetch_sales_by_sku_from_snowflake():
         })
     print(f"  -> {len(sales_by_sku)} sales_by_sku rows from Snowflake")
     return sales_by_sku
+
+
+def fetch_inwards_by_sku_from_snowflake():
+    """Lifetime per-SKU inwards (from real warehouse putaway events, not the
+    planning-stage Pipeline sheet). One row per SKU -- see INWARDS_BY_SKU_QUERY
+    comment for the >=50 'real inward' definition and the lifetime-vs-rolling
+    distinction."""
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print("Fetching inwards_by_sku (lifetime, from putaway_tracking)...")
+        cur.execute(INWARDS_BY_SKU_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+
+    inwards_by_sku = []
+    for row in rows:
+        (sku_group, l1, cat, m1, m2, m3, lifetime_qty, lifetime_cogs_value,
+         latest_inward_date, latest_inward_qty) = row
+        inwards_by_sku.append({
+            "sku_group": sku_group, "l1": l1, "cat": cat, "m1": m1, "m2": m2, "m3": m3,
+            "lifetime_qty": float(lifetime_qty or 0),
+            "lifetime_cogs_value": float(lifetime_cogs_value or 0),
+            "latest_inward_date": latest_inward_date.strftime("%Y-%m-%d") if latest_inward_date else None,
+            "latest_inward_qty": float(latest_inward_qty) if latest_inward_qty is not None else None,
+        })
+    print(f"  -> {len(inwards_by_sku)} inwards_by_sku rows from Snowflake")
+    return inwards_by_sku
+
+
+# ---------------------------------------------------------------------------
+# Snowflake: store-wise/SKU-wise inventory, from snitch_db.maplemonk.
+# INV_FOR_AUTO_DETAIL -- 7.5M rows raw (27K SKUs x 263 stores x 29 months),
+# WAY too large to pull as-is (this is exactly the size risk Aditya flagged).
+# Aggregated entirely in SQL down to ONE ROW PER SKU:
+#   - current online/offline qty (Warehouse=Online, Store=Offline, per Aditya)
+#   - current store count (distinct stores with qty>0, latest month)
+#   - lifetime store count (distinct stores that EVER carried it, any month)
+# This answers "current inv split" and "how many stores carry/carried it"
+# without storing a single row of the raw 7.5M-row table.
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Snowflake: Pipeline (pending/expected inwards) at TRUE SKU_GROUP grain, from
+# production_pipeline_data_v2. Uses NORMALIZED_SKU (not the plain SKU_GROUP
+# column on this table, which Aditya's confirmed is uncleaned/raw) as the
+# join key everywhere -- this is what makes real per-SKU Pipeline visibility
+# possible in Pareto/Quartile/Repeat Evaluation, where it was previously
+# unavailable (the OTHER Pipeline source, the Google Sheets "Pipeline" tab
+# used by inventory.json/pipeline.json, is only Category/Meta-level -- no
+# SKU_GROUP column at all).
+#
+# NOT filtered by STATUS -- matching the exact same "no STATUS filter"
+# convention already used for the Google-Sheets-based Pipeline dataset
+# elsewhere in this file (see the "Pipeline (for Inwards)" section in
+# build()), so both pipeline views are counting the same universe of rows.
+# If you want STATUS-filtered pending qty (e.g. excluding cancelled orders),
+# tell me which STATUS values should count and I'll add the filter --
+# guessing at STATUS semantics here would risk silently under/over-counting.
+# ---------------------------------------------------------------------------
+PIPELINE_BY_SKU_QUERY = """
+SELECT
+    NORMALIZED_SKU AS sku_group,
+    SUM(QTY) AS pending_qty,
+    SUM(QTY * COALESCE(COGS, 0)) AS pending_cogs_value
+FROM snitch_db.maplemonk.production_pipeline_data_v2
+WHERE NORMALIZED_SKU IS NOT NULL
+GROUP BY NORMALIZED_SKU
+"""
+
+
+def fetch_pipeline_by_sku_from_snowflake():
+    """Pending/expected inwards per SKU, true SKU_GROUP grain (via
+    NORMALIZED_SKU) -- see PIPELINE_BY_SKU_QUERY comment."""
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print("Fetching pipeline_by_sku (via NORMALIZED_SKU) from production_pipeline_data_v2...")
+        cur.execute(PIPELINE_BY_SKU_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        sku_group, pending_qty, pending_cogs_value = row
+        if not sku_group:
+            continue
+        out.append({
+            "sku_group": sku_group,
+            "pending_qty": float(pending_qty or 0),
+            "pending_cogs_value": float(pending_cogs_value or 0),
+        })
+    print(f"  -> {len(out)} pipeline_by_sku rows from Snowflake")
+    return out
+
+
+STORE_INV_BY_SKU_QUERY = """
+WITH latest_month AS (
+    SELECT MAX(TO_DATE(MONTH, 'Mon-YYYY')) AS latest_month_date
+    FROM snitch_db.maplemonk.INV_FOR_AUTO_DETAIL
+)
+SELECT
+    SKU_GROUP,
+    MAX(L1_CATEGORY) AS l1, MAX(CATEGORY) AS cat,
+    MAX(META1) AS m1, MAX(META2) AS m2, MAX(META3) AS m3,
+    SUM(CASE WHEN TO_DATE(MONTH,'Mon-YYYY') = (SELECT latest_month_date FROM latest_month) AND CHANNEL_TYPE = 'Warehouse' THEN TOTAL ELSE 0 END) AS current_online_qty,
+    SUM(CASE WHEN TO_DATE(MONTH,'Mon-YYYY') = (SELECT latest_month_date FROM latest_month) AND CHANNEL_TYPE = 'Store' THEN TOTAL ELSE 0 END) AS current_offline_qty,
+    COUNT(DISTINCT CASE WHEN TO_DATE(MONTH,'Mon-YYYY') = (SELECT latest_month_date FROM latest_month) AND CHANNEL_TYPE = 'Store' AND TOTAL > 0 THEN CHANNEL_NAME END) AS current_store_count,
+    COUNT(DISTINCT CASE WHEN CHANNEL_TYPE = 'Store' AND TOTAL > 0 THEN CHANNEL_NAME END) AS lifetime_store_count
+FROM snitch_db.maplemonk.INV_FOR_AUTO_DETAIL
+GROUP BY SKU_GROUP
+"""
+
+
+def fetch_store_inv_by_sku_from_snowflake():
+    """One row per SKU: current online (Warehouse) / offline (Store) qty, and
+    current + lifetime distinct store counts. Aggregated entirely in SQL from
+    the 7.5M-row INV_FOR_AUTO_DETAIL table -- see STORE_INV_BY_SKU_QUERY."""
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print("Fetching store_inv_by_sku (aggregated) from INV_FOR_AUTO_DETAIL...")
+        cur.execute(STORE_INV_BY_SKU_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+
+    store_inv_by_sku = []
+    for row in rows:
+        (sku_group, l1, cat, m1, m2, m3, current_online_qty, current_offline_qty,
+         current_store_count, lifetime_store_count) = row
+        store_inv_by_sku.append({
+            "sku_group": sku_group, "l1": l1, "cat": cat, "m1": m1, "m2": m2, "m3": m3,
+            "current_online_qty": float(current_online_qty or 0),
+            "current_offline_qty": float(current_offline_qty or 0),
+            "current_store_count": int(current_store_count or 0),
+            "lifetime_store_count": int(lifetime_store_count or 0),
+        })
+    print(f"  -> {len(store_inv_by_sku)} store_inv_by_sku rows from Snowflake")
+    return store_inv_by_sku
+
+
+# ---------------------------------------------------------------------------
+# Snowflake: SKU ageing, from snitch_db.maplemonk.daily_fifo_ageing. This is
+# a DoD (day-on-day) table -- one row per SKU per day. We only need the LATEST
+# snapshot per SKU for the dashboard (not the full daily history), so this is
+# aggregated down to one row per SKU via QUALIFY, same size-safe pattern as
+# everything else here.
+# ---------------------------------------------------------------------------
+AGEING_BY_SKU_QUERY = """
+SELECT sku_group, date, inv_current, weighted_age_days, ageing_bucket
+FROM snitch_db.maplemonk.daily_fifo_ageing
+QUALIFY ROW_NUMBER() OVER (PARTITION BY sku_group ORDER BY date DESC) = 1
+"""
+
+
+def fetch_ageing_by_sku_from_snowflake():
+    """Latest ageing snapshot per SKU (not full daily history -- see
+    AGEING_BY_SKU_QUERY comment)."""
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print("Fetching ageing_by_sku (latest snapshot) from daily_fifo_ageing...")
+        cur.execute(AGEING_BY_SKU_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+
+    ageing_by_sku = []
+    for row in rows:
+        sku_group, date, inv_current, weighted_age_days, ageing_bucket = row
+        ageing_by_sku.append({
+            "sku_group": sku_group,
+            "as_of_date": date.strftime("%Y-%m-%d") if hasattr(date, "strftime") else str(date)[:10],
+            "inv_current": float(inv_current or 0),
+            "weighted_age_days": float(weighted_age_days) if weighted_age_days is not None else None,
+            "ageing_bucket": ageing_bucket,
+        })
+    print(f"  -> {len(ageing_by_sku)} ageing_by_sku rows from Snowflake")
+    return ageing_by_sku
+
+
+# ---------------------------------------------------------------------------
+# Snowflake: MoM ageing-bucket trend (Jan 2025 -> latest), for the AGEING tab.
+# Includes L1/Category/Meta1-3 (joined from meta_mapping_cogs_sku_2, same
+# cleaning pattern as INWARDS_BY_SKU_QUERY) so the Ageing tab can be
+# cross-filtered by L1/Category/Meta the same way Pareto/Quartile/Analytics
+# already are -- previously this was aggregated straight to (month, bucket)
+# with no leaf dimension at all, so filters elsewhere in the dashboard had no
+# effect on it.
+#
+# NOTE: daily_fifo_ageing has no CHANNEL column (it's a warehouse-level FIFO
+# ageing ledger, not split online/offline) -- so this does NOT support a
+# channel filter. If you need channel-level ageing, that requires either a
+# channel column existing on daily_fifo_ageing (please confirm/deny) or a
+# different source table -- flagging rather than guessing.
+#
+# avg_inv = TRUE average-per-day total inventory in that bucket across every
+# day in the month (sum inv_current per bucket per day, then AVG across days).
+# closing_sku_count = distinct SKUs in that bucket as of each SKU's LAST
+# snapshot in the month (a headcount, kept snapshot-based on purpose -- see
+# closing_snapshot CTE below).
+# ---------------------------------------------------------------------------
+AGEING_MONTHLY_BY_BUCKET_QUERY = r"""
+WITH meta_map AS (
+    SELECT
+        UPPER(
+            IFF(
+                UPPER(REPLACE(a.SKU_GROUP, ' ', '')) LIKE 'MP%'
+                OR UPPER(REPLACE(a.SKU_GROUP, ' ', '')) LIKE '4C-%',
+                REGEXP_REPLACE(REPLACE(a.SKU_GROUP, ' ', ''), '^([^-]+-[^-]+).*$', '\1'),
+                REGEXP_REPLACE(REPLACE(a.SKU_GROUP, ' ', ''), '-.*$', '')
+            )
+        ) AS sku_group_clean,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.l1_category)) = 'LONG TAIL' THEN a.l1_category END),
+            MIN(CASE WHEN UPPER(TRIM(a.l1_category)) = 'PLUS' THEN a.l1_category END),
+            MIN(CASE WHEN UPPER(TRIM(a.l1_category)) = 'LUXE' THEN a.l1_category END),
+            MIN(CASE WHEN UPPER(TRIM(a.l1_category)) = 'SNITCH' THEN a.l1_category END),
+            MIN(a.l1_category)
+        ) AS l1_category,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'SHIRTS' THEN a.category END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TSHIRTS' THEN a.category END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'JEANS' THEN a.category END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TROUSERS' THEN a.category END),
+            MIN(a.category)
+        ) AS category,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'SHIRTS' THEN a.meta1 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TSHIRTS' THEN a.meta1 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'JEANS' THEN a.meta1 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TROUSERS' THEN a.meta1 END),
+            MIN(a.meta1)
+        ) AS meta1,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'SHIRTS' THEN a.meta2 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TSHIRTS' THEN a.meta2 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'JEANS' THEN a.meta2 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TROUSERS' THEN a.meta2 END),
+            MIN(a.meta2)
+        ) AS meta2,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'SHIRTS' THEN a.meta3 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TSHIRTS' THEN a.meta3 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'JEANS' THEN a.meta3 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TROUSERS' THEN a.meta3 END),
+            MIN(a.meta3)
+        ) AS meta3
+    FROM snitch_db.maplemonk.meta_mapping_cogs_sku_2 a
+    GROUP BY 1
+),
+joined AS (
+    SELECT
+        d.date, d.ageing_bucket, d.sku_group, d.inv_current,
+        m.l1_category, m.category, m.meta1, m.meta2, m.meta3
+    FROM snitch_db.maplemonk.daily_fifo_ageing d
+    LEFT JOIN meta_map m ON UPPER(
+            IFF(
+                UPPER(REPLACE(d.sku_group, ' ', '')) LIKE 'MP%'
+                OR UPPER(REPLACE(d.sku_group, ' ', '')) LIKE '4C-%',
+                REGEXP_REPLACE(REPLACE(d.sku_group, ' ', ''), '^([^-]+-[^-]+).*$', '\1'),
+                REGEXP_REPLACE(REPLACE(d.sku_group, ' ', ''), '-.*$', '')
+            )
+        ) = m.sku_group_clean
+    WHERE d.date >= '2025-01-01'
+      AND d.sku_group IS NOT NULL
+      AND NOT (UPPER(d.sku_group) LIKE 'CD%' OR UPPER(d.sku_group) LIKE 'NT%')
+),
+daily_bucket_totals AS (
+    -- TRUE daily average: sum inv_current across all SKUs in the bucket+leaf
+    -- combo for EVERY day present, then AVG across days in the month.
+    SELECT
+        date, DATE_TRUNC('month', date) AS month_start, ageing_bucket,
+        l1_category, category, meta1, meta2, meta3,
+        SUM(inv_current) AS total_inv_that_day
+    FROM joined
+    GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+),
+closing_snapshot AS (
+    SELECT
+        sku_group, ageing_bucket, l1_category, category, meta1, meta2, meta3,
+        DATE_TRUNC('month', date) AS month_start
+    FROM joined
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY sku_group, DATE_TRUNC('month', date) ORDER BY date DESC) = 1
+),
+closing_counts AS (
+    SELECT month_start, ageing_bucket, l1_category, category, meta1, meta2, meta3,
+           COUNT(DISTINCT sku_group) AS closing_sku_count
+    FROM closing_snapshot
+    GROUP BY 1, 2, 3, 4, 5, 6, 7
+)
+SELECT
+    TO_CHAR(d.month_start, 'YYYY-MM') AS month,
+    d.ageing_bucket, d.l1_category, d.category, d.meta1, d.meta2, d.meta3,
+    AVG(d.total_inv_that_day) AS avg_inv,
+    COALESCE(c.closing_sku_count, 0) AS closing_sku_count
+FROM daily_bucket_totals d
+LEFT JOIN closing_counts c
+  ON c.month_start = d.month_start AND c.ageing_bucket = d.ageing_bucket
+  AND COALESCE(c.l1_category,'') = COALESCE(d.l1_category,'')
+  AND COALESCE(c.category,'') = COALESCE(d.category,'')
+  AND COALESCE(c.meta1,'') = COALESCE(d.meta1,'')
+  AND COALESCE(c.meta2,'') = COALESCE(d.meta2,'')
+  AND COALESCE(c.meta3,'') = COALESCE(d.meta3,'')
+GROUP BY 1, 2, 3, 4, 5, 6, 7, 9
+"""
+
+
+def fetch_ageing_monthly_by_bucket_from_snowflake():
+    """MoM ageing bucket trend, Jan 2025 -> latest, now WITH L1/Category/Meta
+    dimensions so the Ageing tab is cross-filterable like the rest of the
+    dashboard. See AGEING_MONTHLY_BY_BUCKET_QUERY comment (incl. the
+    channel-filter limitation note)."""
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print("Fetching ageing_monthly_by_bucket (with L1/Cat/Meta) from daily_fifo_ageing...")
+        cur.execute(AGEING_MONTHLY_BY_BUCKET_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+
+    ageing_monthly_by_bucket = []
+    for row in rows:
+        month, ageing_bucket, l1, cat, m1, m2, m3, avg_inv, closing_sku_count = row
+        ageing_monthly_by_bucket.append({
+            "month": month, "ageing_bucket": ageing_bucket,
+            "l1": l1, "cat": cat, "m1": m1, "m2": m2, "m3": m3,
+            "avg_inv": float(avg_inv or 0), "closing_sku_count": int(closing_sku_count or 0),
+        })
+    print(f"  -> {len(ageing_monthly_by_bucket)} ageing_monthly_by_bucket rows from Snowflake")
+    return ageing_monthly_by_bucket
+
+
+# ---------------------------------------------------------------------------
+# Sales metrics (Gross Sales / Qty / COGS) attributed to each SKU's ageing
+# bucket AS OF that same month -- i.e. "of the SKUs currently sitting in the
+# 0-30 bucket this month, what did they sell?" Joins each SKU's closing
+# ageing-bucket snapshot for the month (same logic as the closing_snapshot CTE
+# above) to that SKU's SALES_FOR_AUTO_3 total for the same calendar month.
+# Feeds the Ageing tab's per-bucket Sales Mix% / GM% / STR% breakdown.
+# Aggregated straight to (month, bucket, l1, cat, meta1-3) in SQL -- stays
+# small, no per-SKU rows in the output.
+# ---------------------------------------------------------------------------
+AGEING_BUCKET_SALES_QUERY = r"""
+WITH meta_map AS (
+    SELECT
+        UPPER(
+            IFF(
+                UPPER(REPLACE(a.SKU_GROUP, ' ', '')) LIKE 'MP%'
+                OR UPPER(REPLACE(a.SKU_GROUP, ' ', '')) LIKE '4C-%',
+                REGEXP_REPLACE(REPLACE(a.SKU_GROUP, ' ', ''), '^([^-]+-[^-]+).*$', '\1'),
+                REGEXP_REPLACE(REPLACE(a.SKU_GROUP, ' ', ''), '-.*$', '')
+            )
+        ) AS sku_group_clean,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.l1_category)) = 'LONG TAIL' THEN a.l1_category END),
+            MIN(CASE WHEN UPPER(TRIM(a.l1_category)) = 'PLUS' THEN a.l1_category END),
+            MIN(CASE WHEN UPPER(TRIM(a.l1_category)) = 'LUXE' THEN a.l1_category END),
+            MIN(CASE WHEN UPPER(TRIM(a.l1_category)) = 'SNITCH' THEN a.l1_category END),
+            MIN(a.l1_category)
+        ) AS l1_category,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'SHIRTS' THEN a.category END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TSHIRTS' THEN a.category END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'JEANS' THEN a.category END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TROUSERS' THEN a.category END),
+            MIN(a.category)
+        ) AS category,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'SHIRTS' THEN a.meta1 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TSHIRTS' THEN a.meta1 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'JEANS' THEN a.meta1 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TROUSERS' THEN a.meta1 END),
+            MIN(a.meta1)
+        ) AS meta1,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'SHIRTS' THEN a.meta2 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TSHIRTS' THEN a.meta2 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'JEANS' THEN a.meta2 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TROUSERS' THEN a.meta2 END),
+            MIN(a.meta2)
+        ) AS meta2,
+        COALESCE(
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'SHIRTS' THEN a.meta3 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TSHIRTS' THEN a.meta3 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'JEANS' THEN a.meta3 END),
+            MIN(CASE WHEN UPPER(TRIM(a.category)) = 'TROUSERS' THEN a.meta3 END),
+            MIN(a.meta3)
+        ) AS meta3
+    FROM snitch_db.maplemonk.meta_mapping_cogs_sku_2 a
+    GROUP BY 1
+),
+ageing_closing AS (
+    SELECT sku_group, ageing_bucket, DATE_TRUNC('month', date) AS month_start
+    FROM snitch_db.maplemonk.daily_fifo_ageing
+    WHERE date >= '2025-01-01'
+      AND sku_group IS NOT NULL
+      AND NOT (UPPER(sku_group) LIKE 'CD%' OR UPPER(sku_group) LIKE 'NT%')
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY sku_group, DATE_TRUNC('month', date) ORDER BY date DESC) = 1
+),
+sales_monthly AS (
+    SELECT SKU_GROUP AS sku_group, DATE_TRUNC('month', DATE) AS month_start,
+           SUM(GROSS_SALES_VALUE) AS gross_sales, SUM(QTY) AS qty, SUM(COGS_SOLD) AS cogs_sold
+    FROM SNITCH_DB.MAPLEMONK.SALES_FOR_AUTO_3
+    WHERE DATE >= '2025-01-01'
+    GROUP BY 1, 2
+)
+SELECT
+    TO_CHAR(a.month_start,'YYYY-MM') AS month,
+    a.ageing_bucket,
+    m.l1_category, m.category, m.meta1, m.meta2, m.meta3,
+    SUM(COALESCE(s.gross_sales,0)) AS gross_sales,
+    SUM(COALESCE(s.qty,0)) AS qty,
+    SUM(COALESCE(s.cogs_sold,0)) AS cogs_sold
+FROM ageing_closing a
+LEFT JOIN sales_monthly s ON s.sku_group = a.sku_group AND s.month_start = a.month_start
+LEFT JOIN meta_map m ON UPPER(
+        IFF(
+            UPPER(REPLACE(a.sku_group, ' ', '')) LIKE 'MP%'
+            OR UPPER(REPLACE(a.sku_group, ' ', '')) LIKE '4C-%',
+            REGEXP_REPLACE(REPLACE(a.sku_group, ' ', ''), '^([^-]+-[^-]+).*$', '\1'),
+            REGEXP_REPLACE(REPLACE(a.sku_group, ' ', ''), '-.*$', '')
+        )
+    ) = m.sku_group_clean
+GROUP BY 1, 2, 3, 4, 5, 6, 7
+"""
+
+
+def fetch_ageing_bucket_sales_from_snowflake():
+    """Sales attributed to each ageing bucket per month -- see
+    AGEING_BUCKET_SALES_QUERY comment. Feeds the Ageing tab's per-bucket
+    Sales Mix%/GM%/STR% breakdown."""
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print("Fetching ageing_bucket_sales (sales-by-closing-ageing-bucket) from daily_fifo_ageing + SALES_FOR_AUTO_3...")
+        cur.execute(AGEING_BUCKET_SALES_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        month, ageing_bucket, l1, cat, m1, m2, m3, gross, qty, cogs = row
+        out.append({
+            "month": month, "ageing_bucket": ageing_bucket,
+            "l1": l1, "cat": cat, "m1": m1, "m2": m2, "m3": m3,
+            "gross_sales": float(gross or 0), "qty": float(qty or 0), "cogs_sold": float(cogs or 0),
+        })
+    print(f"  -> {len(out)} ageing_bucket_sales rows from Snowflake")
+    return out
 
 
 def fetch_returns_by_sku_from_snowflake():
@@ -884,62 +1813,15 @@ wh_inv AS (
     SELECT
         date,
         TRIM(UPPER(REVERSE(SUBSTRING(REVERSE("Item SkuCode"), POSITION('-' IN REVERSE("Item SkuCode")) + 1)))) AS sku_group,
-        SPLIT_PART("Item SkuCode", '-', -1) AS size_raw,
         SUM(inventory) AS wh_qty
     FROM snitch_db.maplemonk.snitch_final_inventory_wh2
     WHERE facility IN ('SAPL-WH2', 'SAPL-WH1', 'SAPL-NORTH-TAURU')
       AND date = CURRENT_DATE()
-    GROUP BY 1, 2, 3
+    GROUP BY 1, 2
 ),
 today_wh_inv AS (
     SELECT sku_group AS sku_group_wh, SUM(wh_qty) AS today_wh_qty
     FROM wh_inv
-    GROUP BY 1
-),
-size_agg AS (
-    SELECT
-        sku_group AS sku_group_size,
-        CASE
-            WHEN UPPER(TRIM(size_raw)) IN ('XS','S','M','L','XL','XXL','3XL','4XL','5XL','6XL') THEN UPPER(TRIM(size_raw))
-            WHEN TRIM(size_raw) = '28' THEN 'XS'
-            WHEN TRIM(size_raw) = '30' THEN 'S'
-            WHEN TRIM(size_raw) = '32' THEN 'M'
-            WHEN TRIM(size_raw) = '34' THEN 'L'
-            WHEN TRIM(size_raw) = '36' THEN 'XL'
-            WHEN TRIM(size_raw) = '38' THEN 'XXL'
-            WHEN TRIM(size_raw) = '40' THEN '3XL'
-            WHEN TRIM(size_raw) = '42' THEN '4XL'
-            WHEN TRIM(size_raw) = '44' THEN '5XL'
-            WHEN TRIM(size_raw) = '46' THEN '6XL'
-            ELSE UPPER(TRIM(size_raw))
-        END AS size_mapped,
-        SUM(wh_qty) AS wh_qty
-    FROM wh_inv
-    GROUP BY 1, 2
-),
-size_pivot AS (
-    SELECT
-        sku_group_size,
-        SUM(CASE WHEN size_mapped = 'XS' THEN wh_qty ELSE 0 END) AS wh_xs,
-        SUM(CASE WHEN size_mapped = 'S' THEN wh_qty ELSE 0 END) AS wh_s,
-        SUM(CASE WHEN size_mapped = 'M' THEN wh_qty ELSE 0 END) AS wh_m,
-        SUM(CASE WHEN size_mapped = 'L' THEN wh_qty ELSE 0 END) AS wh_l,
-        SUM(CASE WHEN size_mapped = 'XL' THEN wh_qty ELSE 0 END) AS wh_xl,
-        SUM(CASE WHEN size_mapped = 'XXL' THEN wh_qty ELSE 0 END) AS wh_xxl,
-        SUM(CASE WHEN size_mapped = '3XL' THEN wh_qty ELSE 0 END) AS wh_3xl,
-        SUM(CASE WHEN size_mapped = '4XL' THEN wh_qty ELSE 0 END) AS wh_4xl,
-        SUM(CASE WHEN size_mapped = '5XL' THEN wh_qty ELSE 0 END) AS wh_5xl,
-        SUM(CASE WHEN size_mapped = '6XL' THEN wh_qty ELSE 0 END) AS wh_6xl
-    FROM size_agg
-    GROUP BY 1
-),
-offline_agg AS (
-    SELECT
-        TRIM(UPPER(SKU_GROUP)) AS sku_group_off,
-        COUNT(DISTINCT CASE WHEN INVENTORY > 0 OR JIT_QTY > 0 THEN MARKETPLACE_MAPPED END) AS store_count,
-        SUM(INVENTORY) AS total_inventory,
-        SUM(JIT_QTY) AS total_jit_qty
-    FROM snitch_db.maplemonk.offline_master
     GROUP BY 1
 ),
 clicks_agg AS (
@@ -967,92 +1849,20 @@ image_agg AS (
         QUALIFY ROW_NUMBER() OVER (PARTITION BY t.id ORDER BY image.index) = 1
     )
     GROUP BY 1
-),
-sales_window AS (
-    SELECT
-        lk.sku_group_lkp AS sku_group_sw,
-        GREATEST(lk.FINAL_LIVE_DATE, DATEADD(day, -30, CURRENT_DATE())) AS window_start,
-        DATEDIFF(day, GREATEST(lk.FINAL_LIVE_DATE, DATEADD(day, -30, CURRENT_DATE())), CURRENT_DATE()) + 1 AS window_days
-    FROM lkp_agg lk
-    WHERE lk.FINAL_LIVE_DATE IS NOT NULL
-),
-sales_30 AS (
-    SELECT
-        TRIM(UPPER(h.SKU_GROUP)) AS sku_group_sales,
-        SUM(CASE WHEN h.TYPE = 'Store' THEN h.GROSS_QUANTITY ELSE 0 END) AS retail_sales,
-        SUM(CASE WHEN h.TYPE = 'Shopify' THEN h.GROSS_QUANTITY ELSE 0 END) AS shopify_sales,
-        SUM(CASE WHEN h.TYPE = 'Marketplace' THEN h.GROSS_QUANTITY ELSE 0 END) AS mp_sales,
-        SUM(h.GROSS_QUANTITY) AS ttl_sales,
-        MAX(sw.window_days) AS window_days
-    FROM snitch_db.maplemonk.horizontal_sales_categories h
-    INNER JOIN sales_window sw
-        ON sw.sku_group_sw = TRIM(UPPER(h.SKU_GROUP))
-    WHERE h.DATE::DATE >= sw.window_start
-      AND h.DATE::DATE <= CURRENT_DATE()
-    GROUP BY 1
 )
 select
-    a_agg.SKU_group,                                              -- 1
-    lkp_agg.FINAL_LIVE_DATE,                                       -- 2
-    meta_map.l1_category,                                          -- 3
-    meta_map.category,                                             -- 4
-    meta_map.meta1,                                                -- 5
-    meta_map.meta2,                                                -- 6
-    meta_map.meta3,                                                -- 7
-    today_wh_inv.today_wh_qty AS total_wh_inventory,                -- 8
-    size_pivot.wh_xs,                                              -- 9
-    size_pivot.wh_s,                                               -- 10
-    size_pivot.wh_m,                                               -- 11
-    size_pivot.wh_l,                                               -- 12
-    size_pivot.wh_xl,                                              -- 13
-    size_pivot.wh_xxl,                                             -- 14
-    size_pivot.wh_3xl,                                             -- 15
-    size_pivot.wh_4xl,                                             -- 16
-    size_pivot.wh_5xl,                                             -- 17
-    size_pivot.wh_6xl,                                             -- 18
-    CASE
-        WHEN UPPER(TRIM(meta_map.l1_category)) IN ('SNITCH','LUXE') THEN
-            LEAST(
-                FLOOR(COALESCE(size_pivot.wh_s,0) / 1),
-                FLOOR(COALESCE(size_pivot.wh_m,0) / 2),
-                FLOOR(COALESCE(size_pivot.wh_l,0) / 2),
-                FLOOR(COALESCE(size_pivot.wh_xl,0) / 1)
-            )
-        WHEN UPPER(TRIM(meta_map.l1_category)) = 'PLUS' THEN
-            LEAST(
-                FLOOR(COALESCE(size_pivot.wh_3xl,0) / 1),
-                FLOOR(COALESCE(size_pivot.wh_4xl,0) / 1),
-                FLOOR(COALESCE(size_pivot.wh_5xl,0) / 1),
-                FLOOR(COALESCE(size_pivot.wh_6xl,0) / 1)
-            )
-        ELSE NULL
-    END AS sets_available,                                         -- 19
-    offline_agg.store_count,                                       -- 20
-    COALESCE(offline_agg.total_inventory,0) + COALESCE(offline_agg.total_jit_qty,0) AS total_store_inventory, -- 21
-    SUM(CASE WHEN c.click_date BETWEEN lkp_agg.FINAL_LIVE_DATE AND DATEADD(day, 14, lkp_agg.FINAL_LIVE_DATE) THEN c.clicks ELSE 0 END) AS clicks_day_1_15,   -- 22
-    SUM(CASE WHEN c.click_date BETWEEN DATEADD(day, 15, lkp_agg.FINAL_LIVE_DATE) AND DATEADD(day, 29, lkp_agg.FINAL_LIVE_DATE) THEN c.clicks ELSE 0 END) AS clicks_day_15_30, -- 23
-    SUM(CASE WHEN c.click_date BETWEEN DATEADD(day, -30, CURRENT_DATE()) AND CURRENT_DATE() THEN c.clicks ELSE 0 END) AS clicks_last_30_days,                -- 24
-    sales_30.ttl_sales,                                            -- 25
-    sales_30.retail_sales,                                         -- 26
-    sales_30.shopify_sales,                                        -- 27
-    sales_30.mp_sales,                                             -- 28
-    ROUND(
-        (COALESCE(today_wh_inv.today_wh_qty,0) + COALESCE(offline_agg.total_inventory,0) + COALESCE(offline_agg.total_jit_qty,0))
-        / NULLIF(sales_30.ttl_sales / NULLIF(sales_30.window_days,0), 0)
-    , 1) AS overall_doi,                                           -- 29
-    ROUND(
-        (COALESCE(offline_agg.total_inventory,0) + COALESCE(offline_agg.total_jit_qty,0))
-        / NULLIF(sales_30.retail_sales / NULLIF(sales_30.window_days,0), 0)
-    , 1) AS retail_doi,                                            -- 30
-    ROUND(
-        COALESCE(today_wh_inv.today_wh_qty,0)
-        / NULLIF(sales_30.shopify_sales / NULLIF(sales_30.window_days,0), 0)
-    , 1) AS shopify_doi,                                           -- 31
-    ROUND(
-        COALESCE(today_wh_inv.today_wh_qty,0)
-        / NULLIF(sales_30.mp_sales / NULLIF(sales_30.window_days,0), 0)
-    , 1) AS mp_doi,                                                -- 32
-    image_agg.image_url                                            -- 33
+    a_agg.SKU_group,
+    lkp_agg.FINAL_LIVE_DATE,
+    meta_map.l1_category,
+    meta_map.category,
+    meta_map.meta1,
+    meta_map.meta2,
+    meta_map.meta3,
+    today_wh_inv.today_wh_qty AS total_wh_inventory,
+    SUM(CASE WHEN c.click_date BETWEEN lkp_agg.FINAL_LIVE_DATE AND DATEADD(day, 14, lkp_agg.FINAL_LIVE_DATE) THEN c.clicks ELSE 0 END) AS clicks_day_1_15,
+    SUM(CASE WHEN c.click_date BETWEEN DATEADD(day, 15, lkp_agg.FINAL_LIVE_DATE) AND DATEADD(day, 29, lkp_agg.FINAL_LIVE_DATE) THEN c.clicks ELSE 0 END) AS clicks_day_15_30,
+    SUM(CASE WHEN c.click_date BETWEEN DATEADD(day, -30, CURRENT_DATE()) AND CURRENT_DATE() THEN c.clicks ELSE 0 END) AS clicks_last_30_days,
+    image_agg.image_url
 from a_agg
 left join meta_map
     on meta_map.sku_group_clean = UPPER(
@@ -1068,16 +1878,10 @@ inner join lkp_agg
     and lkp_agg.FINAL_LIVE_DATE IS NOT NULL
 left join today_wh_inv
     on today_wh_inv.sku_group_wh = TRIM(UPPER(a_agg.SKU_GROUP))
-left join size_pivot
-    on size_pivot.sku_group_size = TRIM(UPPER(a_agg.SKU_GROUP))
-left join offline_agg
-    on offline_agg.sku_group_off = TRIM(UPPER(a_agg.SKU_GROUP))
 left join clicks_agg c
     on c.sku_group_clicks = TRIM(UPPER(a_agg.SKU_GROUP))
 left join image_agg
     on image_agg.sku_group_image = TRIM(UPPER(a_agg.SKU_GROUP))
-left join sales_30
-    on sales_30.sku_group_sales = TRIM(UPPER(a_agg.SKU_GROUP))
 where
     UPPER(a_agg.SKU_GROUP) NOT LIKE 'MP%'
     AND UPPER(a_agg.SKU_GROUP) NOT LIKE 'FK%'
@@ -1092,24 +1896,6 @@ group by
     meta_map.meta2,
     meta_map.meta3,
     today_wh_inv.today_wh_qty,
-    size_pivot.wh_xs,
-    size_pivot.wh_s,
-    size_pivot.wh_m,
-    size_pivot.wh_l,
-    size_pivot.wh_xl,
-    size_pivot.wh_xxl,
-    size_pivot.wh_3xl,
-    size_pivot.wh_4xl,
-    size_pivot.wh_5xl,
-    size_pivot.wh_6xl,
-    offline_agg.store_count,
-    offline_agg.total_inventory,
-    offline_agg.total_jit_qty,
-    sales_30.ttl_sales,
-    sales_30.retail_sales,
-    sales_30.shopify_sales,
-    sales_30.mp_sales,
-    sales_30.window_days,
     image_agg.image_url
 order by
     total_wh_inventory DESC,
@@ -1133,41 +1919,15 @@ def fetch_clicks_from_snowflake():
             return None
         return v.strftime("%Y-%m-%d") if hasattr(v, "strftime") else str(v)[:10]
 
-    def _f(v):
-        return float(v) if v is not None else None
-
     clicks = []
     for row in rows:
         (sku_group, final_live_date, l1, cat, m1, m2, m3, total_wh_inventory,
-         wh_xs, wh_s, wh_m, wh_l, wh_xl, wh_xxl, wh_3xl, wh_4xl, wh_5xl, wh_6xl,
-         sets_available, store_count, total_store_inventory,
-         clicks_1_15, clicks_15_30, clicks_last_30,
-         ttl_sales, retail_sales, shopify_sales, mp_sales,
-         overall_doi, retail_doi, shopify_doi, mp_doi,
-         image_url) = row
+         clicks_1_15, clicks_15_30, clicks_last_30, image_url) = row
         clicks.append({
             "sku_group": sku_group, "live_date": _d(final_live_date), "l1": l1, "cat": cat,
             "m1": m1, "m2": m2, "m3": m3, "wh_qty": float(total_wh_inventory or 0),
-            # Warehouse stock by size -- feeds "sets available" (matched sizes across
-            # a category's core size run, not just raw total units).
-            "wh_xs": float(wh_xs or 0), "wh_s": float(wh_s or 0), "wh_m": float(wh_m or 0),
-            "wh_l": float(wh_l or 0), "wh_xl": float(wh_xl or 0), "wh_xxl": float(wh_xxl or 0),
-            "wh_3xl": float(wh_3xl or 0), "wh_4xl": float(wh_4xl or 0), "wh_5xl": float(wh_5xl or 0),
-            "wh_6xl": float(wh_6xl or 0),
-            # None (not 0) when the L1 isn't SNITCH/LUXE/PLUS -- "not applicable",
-            # distinct from "zero sets available".
-            "sets_available": _f(sets_available),
-            "store_count": int(store_count or 0), "total_store_inventory": float(total_store_inventory or 0),
             "clicks_1_15": float(clicks_1_15 or 0), "clicks_15_30": float(clicks_15_30 or 0),
-            "clicks_last_30": float(clicks_last_30 or 0),
-            # Trailing-30-day (or since-live, if younger) sales by channel, and the
-            # resulting DOI figures. All four DOI fields stay None (not 0/inf) when
-            # there's no sales in the window to divide by.
-            "ttl_sales": float(ttl_sales or 0), "retail_sales": float(retail_sales or 0),
-            "shopify_sales": float(shopify_sales or 0), "mp_sales": float(mp_sales or 0),
-            "overall_doi": _f(overall_doi), "retail_doi": _f(retail_doi),
-            "shopify_doi": _f(shopify_doi), "mp_doi": _f(mp_doi),
-            "image_url": image_url,
+            "clicks_last_30": float(clicks_last_30 or 0), "image_url": image_url,
         })
     print(f"  -> {len(clicks)} clicks rows from Snowflake")
     return clicks
@@ -1285,9 +2045,6 @@ def fetch_clicks_monthly_from_snowflake():
     return clicks_monthly
 
 
-# ---------------------------------------------------------------------------
-# Snowflake: Store Cut Size (Store Cut Size tab). Per L1 x Category x Meta1-3
-# x Cluster (store region, plus a synthetic 'OVERALL' row per combo), what
 # share of stores carry a "cut" size run (missing a core size) vs "full" for
 # that product line, as of the latest daily offline snapshot.
 # ---------------------------------------------------------------------------
@@ -2200,6 +2957,39 @@ def month_key(dt):
     return dt.strftime("%Y-%m")
 
 
+# ---------------------------------------------------------------------------
+# Global SKU_Group data-quality filter. Per Aditya: SKU_GROUP values that are
+# null/blank, or start with "CD" or "NT", are NOT real sellable SKU groups
+# (internal/test/damage codes etc.) and pollute every SKU-level analysis if
+# left in -- Pareto, Quartile, Ageing, Repeat Evaluation are all wrong until
+# these are stripped out everywhere. Applied once, centrally, to every
+# SKU-grain dataset right after it's fetched, so no single query can forget it.
+# ---------------------------------------------------------------------------
+def is_valid_sku_group(sku_group):
+    if not sku_group:
+        return False
+    s = str(sku_group).strip().upper()
+    if not s:
+        return False
+    if s.startswith("CD") or s.startswith("NT"):
+        return False
+    return True
+
+
+def filter_valid_sku_groups(rows, key="sku_group"):
+    """Drops rows whose `key` field fails is_valid_sku_group(). Returns
+    (kept_rows, dropped_count) so callers can log how many were removed.
+    Handles both the common shape (list of {key: ...} dicts) and the one
+    dataset (images) that's a plain {sku_group: value} dict instead."""
+    if isinstance(rows, dict):
+        kept = {k: v for k, v in rows.items() if is_valid_sku_group(k)}
+        dropped = len(rows) - len(kept)
+        return kept, dropped
+    kept = [r for r in rows if is_valid_sku_group(r.get(key))]
+    dropped = len(rows) - len(kept)
+    return kept, dropped
+
+
 def build_returns():
     """Loads the frozen, one-time 'learning' dataset (data/returns_learned.json,
     monthly Sales Qty / Return Qty at Channel x L1 x Category grain, 2026 only,
@@ -2418,6 +3208,21 @@ def build_targets(returns_actual):
     return aug_targets + v3_targets
 
 
+def _round_floats(obj, ndigits=2):
+    """Recursively rounds every float in a dict/list structure to `ndigits`
+    decimal places. Cuts real file size for free -- Snowflake numeric columns
+    often come back with 10+ decimal places of floating-point noise (e.g.
+    114.30000000000001) that adds nothing but bytes once serialized to JSON.
+    Applied to every dataset right before writing, no frontend change needed."""
+    if isinstance(obj, float):
+        return round(obj, ndigits)
+    if isinstance(obj, dict):
+        return {k: _round_floats(v, ndigits) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_round_floats(v, ndigits) for v in obj]
+    return obj
+
+
 def build(xlsx_path_or_workbook):
     if isinstance(xlsx_path_or_workbook, str):
         wb = openpyxl.load_workbook(xlsx_path_or_workbook, data_only=True)
@@ -2427,6 +3232,12 @@ def build(xlsx_path_or_workbook):
     # ---- Sales (now from Snowflake, daily grain -- see fetch_sales_from_snowflake) ----
     sales = fetch_sales_from_snowflake()
     sales_by_sku = fetch_sales_by_sku_from_snowflake()
+    inwards_by_sku = fetch_inwards_by_sku_from_snowflake()
+    store_inv_by_sku = fetch_store_inv_by_sku_from_snowflake()
+    pipeline_by_sku = fetch_pipeline_by_sku_from_snowflake()
+    ageing_by_sku = fetch_ageing_by_sku_from_snowflake()
+    ageing_monthly_by_bucket = fetch_ageing_monthly_by_bucket_from_snowflake()
+    ageing_bucket_sales = fetch_ageing_bucket_sales_from_snowflake()
     returns_by_sku = fetch_returns_by_sku_from_snowflake()
     returns_actual = fetch_returns_from_snowflake()
     images = fetch_images_from_snowflake()
@@ -2436,6 +3247,46 @@ def build(xlsx_path_or_workbook):
     store_cut_size = fetch_store_cut_size_from_snowflake()
     sales_vs_inwards = fetch_sales_vs_inwards_from_snowflake()
     store_returns = fetch_store_returns_from_snowflake()
+
+    # ---- Repeat Evaluation tab data ----
+    inward_events_by_sku = fetch_inward_events_by_sku_from_snowflake()
+    lifetime_sales_by_sku = fetch_lifetime_sales_by_sku_from_snowflake()
+    lifetime_returns_by_sku = fetch_lifetime_returns_by_sku_from_snowflake()
+    l30d_sales_by_sku = fetch_l30d_sales_by_sku_from_snowflake()
+    l30d_returns_by_sku = fetch_l30d_returns_by_sku_from_snowflake()
+    sales_by_sku_quarterly = fetch_sales_by_sku_quarterly_since_2025_from_snowflake()
+    f30d_sales_by_sku = fetch_f30d_sales_by_sku_from_snowflake()
+    f30d_closing_inv_by_sku = fetch_f30d_closing_inv_by_sku_from_snowflake()
+
+    # ---- Global SKU_Group data-quality filter (null / "CD"* / "NT"* codes) --
+    # applied centrally, right after every SKU-grain fetch, so it can't be
+    # forgotten on any one dataset. See is_valid_sku_group() for the rule.
+    (sales_by_sku, _d1) = filter_valid_sku_groups(sales_by_sku)
+    (inwards_by_sku, _d2) = filter_valid_sku_groups(inwards_by_sku)
+    (store_inv_by_sku, _d3) = filter_valid_sku_groups(store_inv_by_sku)
+    (pipeline_by_sku, _d15b) = filter_valid_sku_groups(pipeline_by_sku)
+    (ageing_by_sku, _d4) = filter_valid_sku_groups(ageing_by_sku)
+    (returns_by_sku, _d5) = filter_valid_sku_groups(returns_by_sku)
+    (images, _d6) = filter_valid_sku_groups(images)
+    (live_sku_groups, _d7) = filter_valid_sku_groups(live_sku_groups)
+    (clicks, _d8) = filter_valid_sku_groups(clicks)
+    (clicks_monthly, _d9) = filter_valid_sku_groups(clicks_monthly)
+    (inward_events_by_sku, _d10) = filter_valid_sku_groups(inward_events_by_sku)
+    (lifetime_sales_by_sku, _d11) = filter_valid_sku_groups(lifetime_sales_by_sku)
+    (lifetime_returns_by_sku, _d12) = filter_valid_sku_groups(lifetime_returns_by_sku)
+    (l30d_sales_by_sku, _d13) = filter_valid_sku_groups(l30d_sales_by_sku)
+    (l30d_returns_by_sku, _d14) = filter_valid_sku_groups(l30d_returns_by_sku)
+    (sales_by_sku_quarterly, _d15) = filter_valid_sku_groups(sales_by_sku_quarterly)
+    (f30d_sales_by_sku, _d16) = filter_valid_sku_groups(f30d_sales_by_sku)
+    (f30d_closing_inv_by_sku, _d17) = filter_valid_sku_groups(f30d_closing_inv_by_sku)
+    total_dropped = sum([_d1,_d2,_d3,_d4,_d5,_d6,_d7,_d8,_d9,_d10,_d11,_d12,_d13,_d14,_d15,_d15b,_d16,_d17])
+    print(f"SKU_Group filter: dropped {total_dropped} rows total across all SKU-grain datasets "
+          f"(null / CD* / NT* sku_group) -- sales_by_sku:{_d1} inwards_by_sku:{_d2} "
+          f"store_inv_by_sku:{_d3} ageing_by_sku:{_d4} returns_by_sku:{_d5} images:{_d6} "
+          f"live_sku_groups:{_d7} clicks:{_d8} clicks_monthly:{_d9} inward_events_by_sku:{_d10} "
+          f"lifetime_sales_by_sku:{_d11} lifetime_returns_by_sku:{_d12} l30d_sales_by_sku:{_d13} "
+          f"l30d_returns_by_sku:{_d14} sales_by_sku_quarterly:{_d15} pipeline_by_sku:{_d15b} "
+          f"f30d_sales_by_sku:{_d16} f30d_closing_inv_by_sku:{_d17}")
 
     # ---- Inventory ----
     # Kept at DAILY grain (not summed to month) because Closing(month) = the
@@ -2510,6 +3361,16 @@ def build(xlsx_path_or_workbook):
         },
         "sales.json": {"sales": sales},
         "sales_by_sku.json": {"sales_by_sku": sales_by_sku, "returns_by_sku": returns_by_sku},
+        "sku_meta.json": {
+            "inwards_by_sku": inwards_by_sku,
+            "store_inv_by_sku": store_inv_by_sku,
+            "ageing_by_sku": ageing_by_sku,
+            "ageing_monthly_by_bucket": ageing_monthly_by_bucket,
+            "ageing_bucket_sales": ageing_bucket_sales,
+            "pipeline_by_sku": pipeline_by_sku,
+        },  # small, one-row-per-SKU summaries -- kept separate from the much
+            # larger monthly-grain sales_by_sku.json so this loads fast even
+            # if that one grows further
         "inventory.json": {"inventory": inventory},
         "pipeline.json": {"pipeline": pipeline},
         "returns_actual.json": {"returns_actual": returns_actual},
@@ -2523,22 +3384,41 @@ def build(xlsx_path_or_workbook):
             "targets_og": targets_og,  # fallback: old Targets tab, Shopify-only, all categories
             "returns": returns,        # frozen monthly learning rows: Channel x L1 x Cat x Month (2026)
         },
+        "repeat_eval.json": {
+            "inward_events_by_sku": inward_events_by_sku,
+            "lifetime_sales_by_sku": lifetime_sales_by_sku,
+            "lifetime_returns_by_sku": lifetime_returns_by_sku,
+            "l30d_sales_by_sku": l30d_sales_by_sku,
+            "l30d_returns_by_sku": l30d_returns_by_sku,
+            "sales_by_sku_quarterly": sales_by_sku_quarterly,
+            "f30d_sales_by_sku": f30d_sales_by_sku,
+            "f30d_closing_inv_by_sku": f30d_closing_inv_by_sku,
+        },
     }
     written = []
     for filename, payload in parts.items():
         path = os.path.join(data_dir, filename)
+        payload = _round_floats(payload, ndigits=2)
         with open(path, "w") as f:
-            json.dump(payload, f)
+            json.dump(payload, f, separators=(",", ":"))  # no spaces -- another free size cut
         size_mb = os.path.getsize(path) / (1024*1024)
         written.append((filename, size_mb))
 
     print(f"sales rows: {len(sales)}, sales_by_sku rows: {len(sales_by_sku)}, returns_by_sku rows: {len(returns_by_sku)}, "
+          f"inwards_by_sku rows: {len(inwards_by_sku)}, store_inv_by_sku rows: {len(store_inv_by_sku)}, "
+          f"pipeline_by_sku rows: {len(pipeline_by_sku)}, "
+          f"ageing_by_sku rows: {len(ageing_by_sku)}, ageing_monthly_by_bucket rows: {len(ageing_monthly_by_bucket)}, "
+          f"ageing_bucket_sales rows: {len(ageing_bucket_sales)}, "
           f"inventory rows: {len(inventory)}, pipeline rows: {len(pipeline)}, "
           f"target rows (new files): {len(targets)}, target rows (OG fallback): {len(targets_og)}, "
           f"returns_actual rows: {len(returns_actual)}, images: {len(images)}, live_sku_groups rows: {len(live_sku_groups)}, "
           f"clicks rows: {len(clicks)}, clicks_monthly rows: {len(clicks_monthly)}, "
           f"store_cut_size rows: {len(store_cut_size)}, sales_vs_inwards rows: {len(sales_vs_inwards)}, "
-          f"store_returns rows: {len(store_returns)}")
+          f"store_returns rows: {len(store_returns)}, "
+          f"inward_events_by_sku rows: {len(inward_events_by_sku)}, lifetime_sales_by_sku rows: {len(lifetime_sales_by_sku)}, "
+          f"lifetime_returns_by_sku rows: {len(lifetime_returns_by_sku)}, l30d_sales_by_sku rows: {len(l30d_sales_by_sku)}, "
+          f"l30d_returns_by_sku rows: {len(l30d_returns_by_sku)}, f30d_sales_by_sku rows: {len(f30d_sales_by_sku)}, "
+          f"f30d_closing_inv_by_sku rows: {len(f30d_closing_inv_by_sku)}")
     if len(sales) > 0 and len(inventory) == 0:
         print("\n⚠️  WARNING: Sales has rows but Inventory is empty. This is the exact symptom")
         print("   of an unauthenticated download failing to resolve IMPORTRANGE on Inv Data 2.")
