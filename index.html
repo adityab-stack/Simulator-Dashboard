@@ -38,10 +38,13 @@
   .reset-btn{ background:transparent; border:1px solid var(--amber-dim); color:var(--amber); padding:8px 16px;
               border-radius:6px; font-size:12px; cursor:pointer; font-family:'IBM Plex Mono', monospace; }
   .reset-btn:hover{ background:var(--amber); color:#111; }
-  .toggle{ display:flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-left:auto; }
+  .toggle{ display:flex; border:1px solid var(--line); border-radius:6px; margin-left:auto; max-width:100%; }
   .toggle button{ background:var(--panel-2); border:none; color:var(--text-dim); padding:8px 18px; cursor:pointer;
-                   font-family:'IBM Plex Mono', monospace; font-size:12px; }
+                   font-family:'IBM Plex Mono', monospace; font-size:12px; flex-shrink:0; }
   .toggle button.active{ background:var(--amber); color:#111; font-weight:600; }
+  .toggle::-webkit-scrollbar{ height:6px; }
+  .toggle::-webkit-scrollbar-thumb{ background:var(--line); border-radius:3px; }
+  .toggle::-webkit-scrollbar-track{ background:transparent; }
   .active-path{ font-family:'IBM Plex Mono', monospace; font-size:12px; color:var(--thread);
                 width:100%; padding-top:8px; }
 
@@ -78,6 +81,38 @@
   .ptable td{ padding:5px 8px; font-family:'IBM Plex Mono', monospace; font-size:12px;
               text-align:right; color:var(--text-dim); border-bottom:1px solid #1B2019; white-space:nowrap; }
   .ptable td.rowlabel{ text-align:left; font-family:'Inter'; font-weight:500; color:var(--text); }
+  /* Pareto/Quartile: narrower L1/Cat/Meta columns so more data fits on screen,
+     plus freeze the first 2 columns (Image, SKU Group) so they stay visible
+     while scrolling horizontally through the rest. */
+  .sku-table th.col-narrow, .sku-table td.col-narrow{ max-width:70px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sku-table th.col-frozen, .sku-table td.col-frozen{ position:sticky; z-index:2; background:var(--panel); }
+  .sku-table th.col-frozen{ z-index:3; }
+  .sku-table td.col-frozen{ background:#171B18; }
+  /* Store Cut Size / Sales vs Inwards / Store Returns tabs: light "paper"
+     table style (from X's original), distinct from the dark .ptable/.sku-table
+     styling used everywhere else -- kept as-is rather than restyled to match,
+     since these 3 tabs are her work and this was the original intended look. */
+  .svi-table{ border-collapse:collapse; background:#F5EFE0; color:#1a1a1a; }
+  .svi-table th, .svi-table td{ padding:6px 9px; text-align:center; vertical-align:middle;
+    font-family:'IBM Plex Mono', monospace; font-size:12px; border:1px solid #DCD2B4; white-space:nowrap; }
+  .svi-table thead th{ background:#EAE0BE; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:0.05em;
+    position:sticky; top:0; z-index:3; }
+  .svi-table thead tr + tr th{ top:30px; } /* only a real 2nd header row shifts down -- a lone row stays at top:0 */
+  .svi-table td.rowlabel{ font-family:'Inter'; font-weight:500; text-align:center; }
+  .svi-table td.dash{ color:#8a8065; }
+  .svi-table .svi-sticky{ position:sticky; background:#F5EFE0; z-index:2; }
+  .svi-table thead .svi-sticky{ background:#EAE0BE; z-index:4; top:0; }
+  .svi-table td.delta-behind{ color:var(--red); }
+  .svi-table td.delta-ahead{ color:var(--green); }
+  .svi-table tr.overall-row{ background:rgba(232,163,61,0.18); }
+  .svi-table tr.overall-row td{ font-weight:600; }
+  .svi-table tr.overall-row td.rowlabel{ color:#8a5a00; }
+  .svi-table .svi-block-end{ border-right:3px solid #B8AA7A; }
+  .svi-table td.svi-top3{ background:#BFE3C2; color:#0F4C1F; font-weight:700; }
+  .svi-table tr.svi-fit-total td{ font-weight:700; background:#E7DCAE; }
+  .svi-table tr.svi-fit-total td.svi-sticky{ background:#E7DCAE; }
+  .svi-table tr.svi-cat-total td{ font-weight:700; background:#D6C583; }
+  .svi-table tr.svi-cat-total td.svi-sticky{ background:#D6C583; }
   .ptable td.dash{ color:var(--text-faint); }
   .ptable td.delta-behind{ color:var(--red); }
   .ptable td.delta-ahead{ color:var(--green); }
@@ -167,7 +202,7 @@
     <button data-view="net" class="active">NET (post-returns)</button>
     <button data-view="gross">GROSS (pre-returns)</button>
   </div>
-  <div class="toggle" id="page-toggle" style="margin-left:8px;">
+  <div class="toggle" id="page-toggle" style="margin-left:8px; overflow-x:auto; overflow-y:hidden; flex-wrap:nowrap; white-space:nowrap; -webkit-overflow-scrolling:touch; scrollbar-width:thin;">
     <button data-page="dashboard" class="active">DASHBOARD</button>
     <button data-page="tracking">SALES TRACKING</button>
     <button data-page="summary">EXEC SUMMARY</button>
@@ -177,6 +212,12 @@
     <button data-page="quartile">QUARTILE</button>
     <button data-page="livesku">LIVE SKU GROUPS</button>
     <button data-page="clicks">CLICKS</button>
+    <button data-page="ageing">AGEING</button>
+    <button data-page="storecutsize">STORE CUT SIZE</button>
+    <button data-page="salesvsinwards">SALES VS INWARDS</button>
+    <button data-page="repeateval">REPEAT EVALUATION</button>
+    <button data-page="freshsku">FRESH SKU REORDER</button>
+    <button data-page="storereturns">STORE RETURNS</button>
   </div>
   <div class="active-path" id="active-path"></div>
 </div>
@@ -210,6 +251,24 @@
   <div id="page-clicks" style="display:none;">
     <div id="clicks-root"></div>
   </div>
+  <div id="page-ageing" style="display:none;">
+    <div id="ageing-root"></div>
+  </div>
+  <div id="page-repeateval" style="display:none;">
+    <div id="repeateval-root"></div>
+  </div>
+  <div id="page-freshsku" style="display:none;">
+    <div id="freshsku-root"></div>
+  </div>
+  <div id="page-storecutsize" style="display:none;">
+    <div id="storecutsize-root"></div>
+  </div>
+  <div id="page-salesvsinwards" style="display:none;">
+    <div id="salesvsinwards-root"></div>
+  </div>
+  <div id="page-storereturns" style="display:none;">
+    <div id="storereturns-root"></div>
+  </div>
 </main>
 
 <div class="img-lightbox" id="img-lightbox" onclick="closeLightbox()">
@@ -230,6 +289,7 @@ let pipelineIndex = {};    // leafKey -> array of pipeline records
 let allLeafKeysByLC = {};  // "l1||cat" -> [leafKeys...] across the WHOLE dataset (for proration denominator)
 let metric = 'qty';
 let currentPage = 'dashboard';
+let storeCutSizeCluster = 'ALL';
 
 const MONTHS = ['2026-08','2026-09','2026-10','2026-11','2026-12'];
 const PREV_MONTH = {'2026-08':'2026-07','2026-09':'2026-08','2026-10':'2026-09','2026-11':'2026-10','2026-12':'2026-11'};
@@ -263,9 +323,10 @@ function currentMonthKey(){
 }
 
 const DATA_PARTS = [
-  'data/meta.json', 'data/sales.json', 'data/sales_by_sku.json',
+  'data/meta.json', 'data/sales.json', 'data/sales_by_sku.json', 'data/sku_meta.json',
   'data/inventory.json', 'data/pipeline.json', 'data/returns_actual.json', 'data/targets.json',
-  'data/livesku.json', 'data/clicks.json'
+  'data/livesku.json', 'data/clicks.json', 'data/repeat_eval.json',
+  'data/storecutsize.json', 'data/salesvsinwards.json', 'data/storereturns.json'
 ];
 
 Promise.all(DATA_PARTS.map(url => fetch(url).then(r => {
@@ -274,10 +335,15 @@ Promise.all(DATA_PARTS.map(url => fetch(url).then(r => {
 })))
 .then(parts => {
   DATA = Object.assign({}, ...parts); // merge all parts into one object, same shape as the old single data.json
+  scrubInvalidSkuGroups(DATA);
   document.getElementById('stamp').innerHTML = 'Data as of <b>' + new Date(DATA.generated_at).toLocaleString() + '</b>';
   buildLearnedReturns();
   applyReturnsAdjustment();
   buildIndexes();
+  return fetch('data/min_criteria.json').then(r => r.ok ? r.json() : {}).catch(() => ({}));
+})
+.then(minCriteria => {
+  DATA.min_criteria = minCriteria || {}; // may be {} if the file doesn't exist yet -- Fresh SKU tab handles that gracefully
   populateFilters();
   render();
 })
@@ -285,6 +351,36 @@ Promise.all(DATA_PARTS.map(url => fetch(url).then(r => {
   console.error('Failed to load dashboard data:', err);
   document.getElementById('stamp').textContent = 'Failed to load data — see console (F12) for details';
 });
+
+// Client-side backstop for the same SKU_Group rule build_data.py already
+// applies (null / "CD"* / "NT"* sku_group = not a real sellable SKU group).
+// Belt-and-suspenders: if the frontend is redeployed against a data snapshot
+// built before this rule existed, this still keeps every SKU-grain analysis
+// (Pareto/Quartile/Ageing/Repeat Eval) correct without needing a rebuild.
+function isValidSkuGroup(sku){
+  if (!sku) return false;
+  const s = String(sku).trim().toUpperCase();
+  if (!s) return false;
+  if (s.startsWith('CD') || s.startsWith('NT')) return false;
+  return true;
+}
+function scrubInvalidSkuGroups(data){
+  const skuKeyedDatasets = [
+    'sales_by_sku','returns_by_sku','inwards_by_sku','store_inv_by_sku','ageing_by_sku',
+    'images','live_sku_groups','clicks','clicks_monthly','inward_events_by_sku',
+    'lifetime_sales_by_sku','lifetime_returns_by_sku','l30d_sales_by_sku','l30d_returns_by_sku',
+    'pipeline_by_sku','sales_by_sku_quarterly','f30d_sales_by_sku','f30d_closing_inv_by_sku',
+  ];
+  let dropped = 0;
+  skuKeyedDatasets.forEach(key => {
+    if (Array.isArray(data[key])){
+      const before = data[key].length;
+      data[key] = data[key].filter(r => isValidSkuGroup(r.sku_group));
+      dropped += (before - data[key].length);
+    }
+  });
+  if (dropped) console.log(`scrubInvalidSkuGroups: dropped ${dropped} rows client-side (null/CD*/NT* sku_group)`);
+}
 
 // Reduces Actual Sales AND Target down to net-of-returns, at Channel x L1 x
 // Category grain (matching the returns file's own grain). Mutates DATA.sales /
@@ -439,6 +535,12 @@ function populateFilters(){
       document.getElementById('page-quartile').style.display = currentPage === 'quartile' ? '' : 'none';
       document.getElementById('page-livesku').style.display = currentPage === 'livesku' ? '' : 'none';
       document.getElementById('page-clicks').style.display = currentPage === 'clicks' ? '' : 'none';
+      document.getElementById('page-ageing').style.display = currentPage === 'ageing' ? '' : 'none';
+      document.getElementById('page-repeateval').style.display = currentPage === 'repeateval' ? '' : 'none';
+      document.getElementById('page-freshsku').style.display = currentPage === 'freshsku' ? '' : 'none';
+      document.getElementById('page-storecutsize').style.display = currentPage === 'storecutsize' ? '' : 'none';
+      document.getElementById('page-salesvsinwards').style.display = currentPage === 'salesvsinwards' ? '' : 'none';
+      document.getElementById('page-storereturns').style.display = currentPage === 'storereturns' ? '' : 'none';
       render();
     });
   });
@@ -658,6 +760,30 @@ function render(){
   }
   if (currentPage === 'clicks'){
     renderClicksTab(f);
+    return;
+  }
+  if (currentPage === 'ageing'){
+    renderAgeingTab(f);
+    return;
+  }
+  if (currentPage === 'repeateval'){
+    renderRepeatEvalTab();
+    return;
+  }
+  if (currentPage === 'freshsku'){
+    renderFreshSkuTab();
+    return;
+  }
+  if (currentPage === 'storecutsize'){
+    renderStoreCutSizeTab(f);
+    return;
+  }
+  if (currentPage === 'salesvsinwards'){
+    renderSalesVsInwardsTab(f);
+    return;
+  }
+  if (currentPage === 'storereturns'){
+    renderStoreReturnsTab(f);
     return;
   }
   renderKPIs(sales, leafKeysMatchingFilter, qtyField, valField, f);
@@ -971,6 +1097,642 @@ function renderClicksTab(f){
 
   document.getElementById('clicks-root').innerHTML = trendSection + sections;
 }
+
+// Same long_tail exclusion as the other two tabs -- source data spells it
+// "long_tail", not "Long Tail", so the query's own NOT IN ('LONG TAIL')
+// filter doesn't actually catch it; done here instead. Also drops rows with
+// no category, including the literal string "(nil)" some rows carry.
+function storeCutSizeExcluded(r){
+  const l1 = (r.l1 || '').trim().toUpperCase().replace(/_/g, ' ');
+  if (l1 === '' || l1 === 'LONG TAIL') return true;
+  const cat = (r.cat || '').trim().toUpperCase();
+  if (cat === '' || cat === '(NIL)') return true;
+  return false;
+}
+
+// Total unique SKU count per L1, and per L1+Category, read off each group's
+// already-deduplicated "OVERALL" cluster row (summing across clusters instead
+// would double-count SKUs stocked in more than one cluster).
+function storeCutSizeTotals(rows){
+  const l1Totals = {}, catTotals = {};
+  rows.forEach(r => {
+    if (r.cluster !== 'OVERALL') return;
+    l1Totals[r.l1] = (l1Totals[r.l1] || 0) + (r.unique_option_count || 0);
+    const key = r.l1 + '||' + r.cat;
+    catTotals[key] = (catTotals[key] || 0) + (r.unique_option_count || 0);
+  });
+  return { l1Totals, catTotals };
+}
+// L1 blocks ordered by total SKU count desc (so e.g. Snitch, with the most
+// SKUs, leads), categories within each L1 also ordered by SKU count desc,
+// then Meta1-3 and cluster (alphabetical, "OVERALL" always last) as before.
+function storeCutSizeSort(l1Totals, catTotals){
+  return (a, b) => {
+    const la = l1Totals[a.l1] || 0, lb = l1Totals[b.l1] || 0;
+    if (la !== lb) return lb - la;
+    if (a.l1 !== b.l1) return (a.l1 || '') < (b.l1 || '') ? -1 : 1;
+    const ca = catTotals[a.l1 + '||' + a.cat] || 0, cb = catTotals[b.l1 + '||' + b.cat] || 0;
+    if (ca !== cb) return cb - ca;
+    if (a.cat !== b.cat) return (a.cat || '') < (b.cat || '') ? -1 : 1;
+    const groupA = [a.m1, a.m2, a.m3].map(v => v ?? '').join('|');
+    const groupB = [b.m1, b.m2, b.m3].map(v => v ?? '').join('|');
+    if (groupA !== groupB) return groupA < groupB ? -1 : 1;
+    const aOverall = a.cluster === 'OVERALL', bOverall = b.cluster === 'OVERALL';
+    if (aOverall !== bOverall) return aOverall ? 1 : -1;
+    return (a.cluster || '').localeCompare(b.cluster || '');
+  };
+}
+
+function storeCutSizePct(v){
+  return (v !== null && v !== undefined) ? v.toFixed(1) + '%' : '—';
+}
+function storeCutSizeRowHTML(r){
+  // Only the "winning" metric gets colored, not both cells: cut% in red when
+  // it exceeds full% (more stores missing a core size than carrying the
+  // complete run), full% in green when it's ahead. Equal or either null: no color.
+  const hasBoth = r.pct_cut !== null && r.pct_full !== null;
+  const cutCls = hasBoth && r.pct_cut > r.pct_full ? ' class="delta-behind"' : '';
+  const fullCls = hasBoth && r.pct_full > r.pct_cut ? ' class="delta-ahead"' : '';
+  const rowCls = r.cluster === 'OVERALL' ? ' class="overall-row"' : '';
+  return `<tr${rowCls}>
+    <td>${r.l1 || '—'}</td>
+    <td>${r.cat || '—'}</td>
+    <td>${r.m1 || '—'}</td>
+    <td>${r.m2 || '—'}</td>
+    <td>${r.m3 || '—'}</td>
+    <td class="rowlabel">${r.cluster}</td>
+    <td>${fmtNum(r.total_store_count_in_cluster)}</td>
+    <td>${fmtNum(r.unique_option_count)}</td>
+    <td>${fmtNum(r.store_count_with_cut_size)}</td>
+    <td${cutCls}>${storeCutSizePct(r.pct_cut)}</td>
+    <td${fullCls}>${storeCutSizePct(r.pct_full)}</td>
+  </tr>`;
+}
+
+function setStoreCutSizeCluster(v){
+  storeCutSizeCluster = v;
+  render();
+}
+
+function renderStoreCutSizeTab(f){
+  document.getElementById('kpi-row').innerHTML = '';
+  const allRows = (DATA.store_cut_size || []).filter(r => liveSkuMatchesFilter(r, f) && !storeCutSizeExcluded(r));
+
+  // Cluster list is built from the full (L1/Category/Meta-filtered) set, not
+  // the cluster-filtered one below, so picking a cluster doesn't shrink the
+  // dropdown's own option list out from under the user.
+  const clusters = [...new Set(allRows.map(r => r.cluster))].sort();
+  const overallIdx = clusters.indexOf('OVERALL');
+  if (overallIdx !== -1){ clusters.splice(overallIdx, 1); clusters.push('OVERALL'); }
+  if (storeCutSizeCluster !== 'ALL' && !clusters.includes(storeCutSizeCluster)) storeCutSizeCluster = 'ALL';
+
+  const clusterFilterHTML = `<div class="filter-group" style="margin-bottom:14px;">
+    <label>Cluster</label>
+    <select onchange="setStoreCutSizeCluster(this.value)">
+      <option value="ALL"${storeCutSizeCluster==='ALL'?' selected':''}>All Clusters</option>
+      ${clusters.map(c => `<option value="${c}"${c===storeCutSizeCluster?' selected':''}>${c}</option>`).join('')}
+    </select>
+  </div>`;
+
+  // Totals computed off allRows (L1/Category/Meta-filtered, but before the
+  // Cluster dropdown narrows it further) so sort order stays stable
+  // regardless of which single cluster the user picks.
+  const { l1Totals, catTotals } = storeCutSizeTotals(allRows);
+  const rows = allRows
+    .filter(r => storeCutSizeCluster === 'ALL' || r.cluster === storeCutSizeCluster)
+    .sort(storeCutSizeSort(l1Totals, catTotals));
+
+  if (!rows.length){
+    document.getElementById('storecutsize-root').innerHTML = clusterFilterHTML +
+      '<div class="empty-note">No rows match this filter.</div>';
+    return;
+  }
+  const header = `<th>L1</th><th>Category</th><th>Meta 1</th><th>Meta 2</th><th>Meta 3</th><th>Cluster</th>
+    <th>Total Store Count</th><th>Unique Options</th><th>Stores w/ Cut Size</th><th>% Cut</th><th>% Full</th>`;
+  document.getElementById('storecutsize-root').innerHTML = `
+    <div class="card-section">
+      <h2>Store Cut Size <span class="rule"></span> <span class="count">${rows.length} rows</span></h2>
+      ${clusterFilterHTML}
+      <div style="overflow:auto; max-height:70vh;">
+        <table class="svi-table">
+          <thead><tr>${header}</tr></thead>
+          <tbody>${rows.map(storeCutSizeRowHTML).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// Category/Meta1-3 only -- Channel and L1 are intentionally ignored (L1 is
+// the grid split itself: Snitch/Luxe/Plus each get their own table below).
+function sviMatchesFilter(r, f){
+  if (f.cat !== 'ALL' && r.cat !== f.cat) return false;
+  if (f.m1 !== 'ALL' && r.m1 !== f.m1) return false;
+  if (f.m2 !== 'ALL' && r.m2 !== f.m2) return false;
+  if (f.m3 !== 'ALL' && r.m3 !== f.m3) return false;
+  return true;
+}
+
+const SVI_L1_GRIDS = [
+  {id:'snitch', title:'Snitch', l1:'snitch', sizes:['XS','S','M','L','XL','XXL']},
+  {id:'luxe',   title:'Luxe',   l1:'luxe',   sizes:['XS','S','M','L','XL','XXL']},
+  {id:'plus',   title:'Plus',   l1:'plus',   sizes:['3XL','4XL','5XL','6XL','7XL','8XL']},
+];
+const SVI_BLOCKS = [
+  {title:'Inwards',       metricKey:'inward'},
+  {title:'Overall Sales', metricKey:'overall'},
+  {title:'Offline',       metricKey:'store'},
+  {title:'Shopify',       metricKey:'shopify'},
+  {title:'MP',            metricKey:'mp'},
+];
+
+// Fixed-width label columns, frozen (position:sticky) while the block
+// columns scroll horizontally underneath them.
+const SVI_STICKY_COLS = [
+  {label:'Category', width:110},
+  {label:'Fit',       width:130},
+  {label:'Month',    width:90},
+];
+function sviStickyLeft(i){
+  let left = 0;
+  for (let j = 0; j < i; j++) left += SVI_STICKY_COLS[j].width;
+  return left;
+}
+
+// This tab only cares about fit as the size-curve split, not the full
+// Meta1/2/3 breakdown -- Meta1/2/3 are collapsed into one "Fit" field here,
+// sourced from whichever meta column actually holds fit for that category
+// (shirts/tshirts: meta3, jeans/trousers: meta1). Every other category falls
+// back to meta1 too, same field it always showed as its primary attribute.
+function sviFitOf(r){
+  const cat = (r.cat || '').toLowerCase();
+  if (cat === 'shirts' || cat === 'tshirts') return r.m3;
+  return r.m1; // jeans, trousers, and everything else
+}
+
+// One row per size, at L1 x Category x Fit x Month grain -- collapsed here
+// into one group per Category/Fit/Month combo, holding all its sizes' qty
+// so % share across sizes can be computed per metric.
+function sviBuildGroups(rows){
+  const groups = {};
+  rows.forEach(r => {
+    const fit = sviFitOf(r);
+    const key = [r.cat, fit, r.month_key].join('|');
+    if (!groups[key]){
+      groups[key] = { cat:r.cat, fit, month:r.month, month_key:r.month_key, sizeData:{} };
+    }
+    // Sum, not overwrite -- distinct meta2/meta3 rows now collapse into the
+    // same (cat, fit, month) group and can share a size, so their qty must add.
+    const sd = groups[key].sizeData;
+    const prev = sd[r.size] || { inward:0, mp:0, shopify:0, store:0 };
+    sd[r.size] = {
+      inward: prev.inward + r.inward_qty, mp: prev.mp + r.mp_qty,
+      shopify: prev.shopify + r.shopify_qty, store: prev.store + r.store_qty,
+    };
+  });
+  return Object.values(groups);
+}
+// Category order is driven by each category's total Overall Sales qty
+// (Marketplace+Shopify+Store, summed across every row) -- highest first --
+// not alphabetically. Fit and month stay as secondary/tertiary sort keys.
+function sviCategoryTotals(rows){
+  const totals = {};
+  rows.forEach(r => { totals[r.cat] = (totals[r.cat] || 0) + r.mp_qty + r.shopify_qty + r.store_qty; });
+  return totals;
+}
+function sviSort(catTotals){
+  return (a, b) => {
+    const ta = catTotals[a.cat] || 0, tb = catTotals[b.cat] || 0;
+    if (ta !== tb) return tb - ta;
+    if (a.cat !== b.cat) return (a.cat || '') < (b.cat || '') ? -1 : 1;
+    const ga = a.fit ?? '', gb = b.fit ?? '';
+    if (ga !== gb) return ga < gb ? -1 : 1;
+    return (b.month_key || '').localeCompare(a.month_key || ''); // most recent month first
+  };
+}
+
+// % share of this group's total for `metricKey`, across `sizes` -- plus a
+// Total column (sum of the %s) as a sanity check, expected to read ~100%.
+function sviBlockPct(group, sizes, metricKey){
+  const values = sizes.map(sz => {
+    const d = group.sizeData[sz];
+    if (!d) return 0;
+    if (metricKey === 'overall') return d.mp + d.shopify + d.store;
+    return d[metricKey]; // 'inward' | 'store' | 'shopify' | 'mp' match sizeData's own keys
+  });
+  const total = values.reduce((a, b) => a + b, 0);
+  const pcts = values.map(v => total > 0 ? (v / total * 100) : null);
+  const pctTotal = total > 0 ? pcts.reduce((a, p) => a + p, 0) : null;
+  return { pcts, pctTotal };
+}
+// Indices of the 3 highest non-null % values in a block, for green highlighting.
+function sviTop3Indices(pcts){
+  return new Set(
+    pcts.map((p, i) => ({ p, i })).filter(x => x.p !== null)
+        .sort((a, b) => b.p - a.p).slice(0, 3).map(x => x.i)
+  );
+}
+
+// Blank Fit is meaningless for the four categories the Fit column is built
+// for (it's their sole split field now) -- dropped there. Left alone for
+// every other category, where a blank fallback (meta1) is expected/normal.
+const SVI_FIT_CATEGORIES = new Set(['shirts', 'tshirts', 'jeans', 'trousers']);
+function sviBlankFitExcluded(r){
+  const cat = (r.cat || '').toLowerCase();
+  if (!SVI_FIT_CATEGORIES.has(cat)) return false;
+  const fit = sviFitOf(r);
+  return !fit || !fit.trim();
+}
+
+function sviHeaderHTML(sizes){
+  const stickyTop = SVI_STICKY_COLS.map((c, i) => {
+    const lastSticky = i === SVI_STICKY_COLS.length - 1;
+    return `<th rowspan="2" class="svi-sticky${lastSticky ? ' svi-block-end' : ''}" style="left:${sviStickyLeft(i)}px; width:${c.width}px;">${c.label}</th>`;
+  }).join('');
+  const top = SVI_BLOCKS.map(b => `<th colspan="${sizes.length + 1}">${b.title}</th>`).join('');
+  const sub = SVI_BLOCKS.map(() =>
+    sizes.map(sz => `<th>${sz}</th>`).join('') + '<th class="svi-block-end">Total</th>'
+  ).join('');
+  return `<tr>${stickyTop}${top}</tr><tr>${sub}</tr>`;
+}
+// Renders one row from a set of per-size qty (either a single month's group,
+// or a merged multi-month total) -- shared by ordinary rows and total rows.
+function sviRowHTMLFromSizeData(catLabel, fitLabel, monthLabel, sizeData, sizes, rowClass){
+  const pseudoGroup = { sizeData };
+  const blocks = SVI_BLOCKS.map(b => {
+    const { pcts, pctTotal } = sviBlockPct(pseudoGroup, sizes, b.metricKey);
+    const top3 = sviTop3Indices(pcts);
+    const sizeCells = pcts.map((p, i) =>
+      `<td${top3.has(i) ? ' class="svi-top3"' : ''}>${p === null ? '—' : p.toFixed(1) + '%'}</td>`
+    ).join('');
+    return sizeCells + `<td class="svi-block-end">${pctTotal === null ? '—' : pctTotal.toFixed(1) + '%'}</td>`;
+  }).join('');
+  const stickyCells = [catLabel, fitLabel, monthLabel].map((v, i) => {
+    const lastSticky = i === SVI_STICKY_COLS.length - 1;
+    return `<td class="svi-sticky${lastSticky ? ' svi-block-end' : ''}" style="left:${sviStickyLeft(i)}px; width:${SVI_STICKY_COLS[i].width}px;">${v || '—'}</td>`;
+  }).join('');
+  return `<tr${rowClass ? ` class="${rowClass}"` : ''}>${stickyCells}${blocks}</tr>`;
+}
+function sviRowHTML(group, sizes){
+  return sviRowHTMLFromSizeData(group.cat, group.fit, group.month, group.sizeData, sizes);
+}
+
+// Sums qty per size across a list of month-groups -- used for both the
+// per-fit subtotal (all months, one fit) and the per-category grand total
+// (all months, every fit).
+function sviMergeSizeData(list){
+  const merged = {};
+  list.forEach(g => {
+    Object.entries(g.sizeData).forEach(([sz, d]) => {
+      const prev = merged[sz] || { inward:0, mp:0, shopify:0, store:0 };
+      merged[sz] = {
+        inward: prev.inward + d.inward, mp: prev.mp + d.mp,
+        shopify: prev.shopify + d.shopify, store: prev.store + d.store,
+      };
+    });
+  });
+  return merged;
+}
+// Expects `groups` pre-sorted (category by sales desc, then fit, then month
+// desc). Walks it once, inserting a "<Fit> — Total" row after every fit's run
+// of months, and one "Final Split" row after every category's last fit.
+function sviBuildDisplayRows(groups){
+  const items = [];
+  let i = 0;
+  while (i < groups.length){
+    const cat = groups[i].cat;
+    const catMonthGroups = [];
+    while (i < groups.length && groups[i].cat === cat){
+      const fit = groups[i].fit;
+      const fitMonthGroups = [];
+      while (i < groups.length && groups[i].cat === cat && groups[i].fit === fit){
+        items.push({ kind:'month', group: groups[i] });
+        fitMonthGroups.push(groups[i]);
+        i++;
+      }
+      items.push({ kind:'fit-total', cat, fit, sizeData: sviMergeSizeData(fitMonthGroups) });
+      catMonthGroups.push(...fitMonthGroups);
+    }
+    items.push({ kind:'cat-total', cat, sizeData: sviMergeSizeData(catMonthGroups) });
+  }
+  return items;
+}
+function sviDisplayRowHTML(item, sizes){
+  if (item.kind === 'month') return sviRowHTML(item.group, sizes);
+  if (item.kind === 'fit-total') return sviRowHTMLFromSizeData(item.cat, `${item.fit} — Total`, '—', item.sizeData, sizes, 'svi-fit-total');
+  return sviRowHTMLFromSizeData(item.cat, 'Final Split', '—', item.sizeData, sizes, 'svi-cat-total');
+}
+
+function renderSalesVsInwardsTab(f){
+  document.getElementById('kpi-row').innerHTML = '';
+  const cur = currentMonthKey();
+  const rows = (DATA.sales_vs_inwards || [])
+    .filter(r => sviMatchesFilter(r, f) && r.month_key !== cur && !sviBlankFitExcluded(r));
+
+  const sections = SVI_L1_GRIDS.map(grid => {
+    const gridRows = rows.filter(r => (r.l1 || '').toLowerCase() === grid.l1);
+    const catTotals = sviCategoryTotals(gridRows);
+    const groups = sviBuildGroups(gridRows).sort(sviSort(catTotals));
+    const colCount = SVI_STICKY_COLS.length + SVI_BLOCKS.length * (grid.sizes.length + 1);
+    const displayRows = sviBuildDisplayRows(groups);
+    const body = groups.length
+      ? displayRows.map(item => sviDisplayRowHTML(item, grid.sizes)).join('')
+      : `<tr><td class="rowlabel dash" colspan="${colCount}">No data in this slice</td></tr>`;
+    return `<div class="card-section">
+      <h2>${grid.title} <span class="rule"></span> <span class="count">${groups.length} rows</span></h2>
+      <div style="overflow:auto; max-height:70vh;">
+        <table class="svi-table">
+          <thead>${sviHeaderHTML(grid.sizes)}</thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('salesvsinwards-root').innerHTML = sections;
+}
+
+// Same blank/long_tail L1 and blank/(nil) category guards as Store Cut Size.
+function storeReturnsExcluded(r){
+  const l1 = (r.l1 || '').trim().toUpperCase().replace(/_/g, ' ');
+  if (l1 === '' || l1 === 'LONG TAIL') return true;
+  const cat = (r.cat || '').trim().toUpperCase();
+  if (cat === '' || cat === '(NIL)') return true;
+  return false;
+}
+// L1/Category/Meta1-3 all apply (unlike Sales vs Inwards, L1 is a row label
+// here, not a grid split, so filtering by it is meaningful). Channel ignored.
+function storeReturnsMatchesFilter(r, f){
+  if (f.l1 !== 'ALL' && r.l1 !== f.l1) return false;
+  if (f.cat !== 'ALL' && r.cat !== f.cat) return false;
+  if (f.m1 !== 'ALL' && r.m1 !== f.m1) return false;
+  if (f.m2 !== 'ALL' && r.m2 !== f.m2) return false;
+  if (f.m3 !== 'ALL' && r.m3 !== f.m3) return false;
+  return true;
+}
+// Same "Fit" derivation as the Sales vs Inwards tab's Meta4 column.
+function storeReturnsFitOf(r){
+  const cat = (r.cat || '').toLowerCase();
+  if (cat === 'shirts' || cat === 'tshirts') return r.m3;
+  return r.m1;
+}
+const FULL_MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+function monthLabelFull(monthKey){
+  if (!monthKey) return '—';
+  const [, m] = monthKey.split('-').map(Number);
+  return FULL_MONTH_NAMES[m - 1];
+}
+
+function storeReturnsL1CatTotals(rows){
+  const l1Totals = {}, catTotals = {};
+  rows.forEach(r => {
+    l1Totals[r.l1] = (l1Totals[r.l1] || 0) + r.qty;
+    const key = r.l1 + '||' + r.cat;
+    catTotals[key] = (catTotals[key] || 0) + r.qty;
+  });
+  return { l1Totals, catTotals };
+}
+// Groups into one row per (row-key), each holding a month_key -> {qty,cogs}
+// map -- months become columns when rendered, instead of separate rows.
+function storeReturnsGroupByRow(rows, rowKeyFn, rowLabelFn){
+  const map = {};
+  rows.forEach(r => {
+    const k = rowKeyFn(r);
+    if (!map[k]) map[k] = { ...rowLabelFn(r), byMonth: {} };
+    const bm = map[k].byMonth;
+    if (!bm[r.month_key]) bm[r.month_key] = { qty: 0, cogs: 0 };
+    bm[r.month_key].qty += r.qty;
+    bm[r.month_key].cogs += r.cogs_value;
+  });
+  return Object.values(map);
+}
+// A category "has meta" if it resolves to more than one distinct Fit value
+// (shirts/tshirts/jeans/trousers) -- everything else (cargo pants, jackets,
+// etc.) always falls back to a single blank Fit and counts as "no meta".
+function storeReturnsCategoryHasMeta(rows){
+  const fitsByCat = {};
+  rows.forEach(r => {
+    const key = r.l1 + '||' + r.cat;
+    (fitsByCat[key] = fitsByCat[key] || new Set()).add(storeReturnsFitOf(r) || '');
+  });
+  const hasMeta = {};
+  Object.entries(fitsByCat).forEach(([key, set]) => { hasMeta[key] = set.size > 1; });
+  return hasMeta;
+}
+// L1 by total returns desc; within L1, categories with meta (a real Fit
+// split) before categories without; within that tier, category by total
+// returns desc; then (grid 3 only) Fit alphabetically. No month tiebreak
+// needed -- month is now a set of columns on each row, not part of row identity.
+function storeReturnsRowSort(l1Totals, catTotals, hasMeta, withFit){
+  return (a, b) => {
+    const la = l1Totals[a.l1] || 0, lb = l1Totals[b.l1] || 0;
+    if (la !== lb) return lb - la;
+    if (a.l1 !== b.l1) return (a.l1 || '') < (b.l1 || '') ? -1 : 1;
+    const ha = hasMeta[a.l1 + '||' + a.cat] ? 1 : 0, hb = hasMeta[b.l1 + '||' + b.cat] ? 1 : 0;
+    if (ha !== hb) return hb - ha;
+    const ca = catTotals[a.l1 + '||' + a.cat] || 0, cb = catTotals[b.l1 + '||' + b.cat] || 0;
+    if (ca !== cb) return cb - ca;
+    if (a.cat !== b.cat) return (a.cat || '') < (b.cat || '') ? -1 : 1;
+    if (withFit){
+      const fa = a.fit ?? '', fb = b.fit ?? '';
+      if (fa !== fb) return fa < fb ? -1 : 1;
+    }
+    return 0;
+  };
+}
+
+// Sums byMonth maps across a list of rows -- used for both the Grid 2 L1
+// total and the Grid 3 Category total.
+function storeReturnsMergeByMonth(list){
+  const merged = {};
+  list.forEach(item => {
+    Object.entries(item.byMonth).forEach(([m, d]) => {
+      if (!merged[m]) merged[m] = { qty: 0, cogs: 0 };
+      merged[m].qty += d.qty;
+      merged[m].cogs += d.cogs;
+    });
+  });
+  return merged;
+}
+// Grid 2 (rows pre-sorted L1 desc, then Category desc): inserts one
+// "<L1> — Total" row after every L1's run of categories.
+function storeReturnsBuildG2Display(g2Items){
+  const out = [];
+  let i = 0;
+  while (i < g2Items.length){
+    const l1 = g2Items[i].l1;
+    const l1Items = [];
+    while (i < g2Items.length && g2Items[i].l1 === l1){
+      out.push({ kind:'row', item: g2Items[i] });
+      l1Items.push(g2Items[i]);
+      i++;
+    }
+    out.push({ kind:'l1-total', l1, byMonth: storeReturnsMergeByMonth(l1Items) });
+  }
+  return out;
+}
+// Grid 3 (rows pre-sorted L1 desc, Category desc, Fit alpha): inserts one
+// "<Category> — Total" row after every Category's run of fits, and one
+// "<L1> — Total" row after every L1's run of categories.
+function storeReturnsBuildG3Display(g3Items){
+  const out = [];
+  let i = 0;
+  while (i < g3Items.length){
+    const l1 = g3Items[i].l1;
+    const l1Items = [];
+    while (i < g3Items.length && g3Items[i].l1 === l1){
+      const cat = g3Items[i].cat;
+      const catItems = [];
+      while (i < g3Items.length && g3Items[i].l1 === l1 && g3Items[i].cat === cat){
+        out.push({ kind:'row', item: g3Items[i] });
+        catItems.push(g3Items[i]);
+        l1Items.push(g3Items[i]);
+        i++;
+      }
+      // Categories with no real Fit split (cargo pants, jackets, etc.) fall
+      // back to a single blank-Fit row -- a Total there would just duplicate
+      // it, so only add the Total when there's more than one Fit to sum.
+      if (catItems.length > 1){
+        out.push({ kind:'cat-total', l1, cat, byMonth: storeReturnsMergeByMonth(catItems) });
+      }
+    }
+    out.push({ kind:'l1-total', l1, byMonth: storeReturnsMergeByMonth(l1Items) });
+  }
+  return out;
+}
+
+// Grid 1: two rows (Units, COGS), one column per month.
+function storeReturnsGrid1TableHTML(g1Rows){
+  if (!g1Rows.length) return '<div class="empty-note">No data.</div>';
+  const monthTh = g1Rows.map(r => `<th>${r.label}</th>`).join('');
+  const unitsTd = g1Rows.map(r => `<td>${fmtNum(r.qty)}</td>`).join('');
+  const cogsTd = g1Rows.map(r => `<td>${fmtMoney(r.cogs)}</td>`).join('');
+  return `<table class="svi-table">
+    <thead><tr><th>Metric</th>${monthTh}</tr></thead>
+    <tbody>
+      <tr><td class="rowlabel">Units</td>${unitsTd}</tr>
+      <tr><td class="rowlabel">COGS</td>${cogsTd}</tr>
+    </tbody>
+  </table>`;
+}
+// Simple dual-line trend -- Units and COGS live on very different scales, so
+// each line is normalized to its own min/max rather than sharing one axis.
+// Native <title> tooltips on each point show the exact value on hover.
+function storeReturnsTrendChart(g1Rows){
+  if (!g1Rows.length) return '<div class="empty-note">No data.</div>';
+  const W = 480, H = 190, padX = 30, padTop = 24, padBottom = 30;
+  const innerW = W - padX * 2, innerH = H - padTop - padBottom;
+  const n = g1Rows.length;
+  const maxQty = Math.max(...g1Rows.map(r => r.qty), 1);
+  const maxCogs = Math.max(...g1Rows.map(r => r.cogs), 1);
+  const xOf = i => padX + (n === 1 ? innerW / 2 : i * innerW / (n - 1));
+  const yOfQty = v => padTop + innerH - (v / maxQty * innerH);
+  const yOfCogs = v => padTop + innerH - (v / maxCogs * innerH);
+  const qtyPts = g1Rows.map((r, i) => `${xOf(i).toFixed(1)},${yOfQty(r.qty).toFixed(1)}`).join(' ');
+  const cogsPts = g1Rows.map((r, i) => `${xOf(i).toFixed(1)},${yOfCogs(r.cogs).toFixed(1)}`).join(' ');
+  const dots = (kind, color) => g1Rows.map((r, i) => {
+    const [x, y] = kind === 'qty' ? [xOf(i), yOfQty(r.qty)] : [xOf(i), yOfCogs(r.cogs)];
+    const val = kind === 'qty' ? fmtNum(r.qty) + ' units' : fmtMoney(r.cogs);
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5" style="fill:${color}; cursor:pointer;"><title>${r.label}: ${val}</title></circle>`;
+  }).join('');
+  const labels = g1Rows.map((r, i) => `<text x="${xOf(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" style="font-family:'IBM Plex Mono',monospace; font-size:10px; fill:var(--text-faint); text-transform:uppercase;">${r.label}</text>`).join('');
+  return `<div style="max-width:${W}px; margin:0 auto;">
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%; height:${H}px; display:block;">
+      <polyline points="${qtyPts}" style="fill:none; stroke:var(--amber); stroke-width:2;"></polyline>
+      <polyline points="${cogsPts}" style="fill:none; stroke:var(--thread); stroke-width:2;"></polyline>
+      ${dots('qty', 'var(--amber)')}${dots('cogs', 'var(--thread)')}${labels}
+    </svg>
+    <div style="display:flex; gap:16px; justify-content:center; margin-top:6px; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--text-dim);">
+      <span><span style="display:inline-block;width:10px;height:10px;background:var(--amber);border-radius:2px;margin-right:5px;"></span>Units</span>
+      <span><span style="display:inline-block;width:10px;height:10px;background:var(--thread);border-radius:2px;margin-right:5px;"></span>COGS</span>
+    </div>
+  </div>`;
+}
+// Grid 2/3: one row per (L1, Category[, Fit]), one Units+COGS column pair per
+// month, plus the total rows built by storeReturnsBuildG2Display/G3Display
+// (kind: 'row' | 'l1-total' | 'cat-total') -- reuses the same bold tan-tinted
+// styling as the Sales vs Inwards tab's subtotal/grand-total rows.
+function storeReturnsBreakdownTableHTML(displayItems, months, withFit){
+  if (!displayItems.length) return '<div class="empty-note">No data.</div>';
+  const leadTh = withFit ? '<th rowspan="2">L1</th><th rowspan="2">Category</th><th rowspan="2">Fit</th>'
+                         : '<th rowspan="2">L1</th><th rowspan="2">Category</th>';
+  const monthTh = months.map(m => `<th colspan="2">${monthLabelFull(m)}</th>`).join('');
+  const subTh = months.map(() => '<th>Units</th><th>COGS</th>').join('');
+  const monthCells = byMonth => months.map(m => {
+    const d = byMonth[m];
+    return `<td>${d ? fmtNum(d.qty) : '—'}</td><td>${d ? fmtMoney(d.cogs) : '—'}</td>`;
+  }).join('');
+  const body = displayItems.map(di => {
+    if (di.kind === 'row'){
+      const it = di.item;
+      const leadTd = withFit
+        ? `<td>${it.l1 || '—'}</td><td>${it.cat || '—'}</td><td>${it.fit || '—'}</td>`
+        : `<td>${it.l1 || '—'}</td><td>${it.cat || '—'}</td>`;
+      return `<tr>${leadTd}${monthCells(it.byMonth)}</tr>`;
+    }
+    if (di.kind === 'cat-total'){
+      const leadTd = withFit
+        ? `<td>${di.l1 || '—'}</td><td>${di.cat} — Total</td><td>—</td>`
+        : `<td>${di.l1 || '—'}</td><td>${di.cat} — Total</td>`;
+      return `<tr class="svi-fit-total">${leadTd}${monthCells(di.byMonth)}</tr>`;
+    }
+    const leadTd = withFit
+      ? `<td>${di.l1} — Total</td><td>—</td><td>—</td>`
+      : `<td>${di.l1} — Total</td><td>—</td>`;
+    return `<tr class="svi-cat-total">${leadTd}${monthCells(di.byMonth)}</tr>`;
+  }).join('');
+  return `<table class="svi-table">
+    <thead><tr>${leadTh}${monthTh}</tr><tr>${subTh}</tr></thead>
+    <tbody>${body}</tbody>
+  </table>`;
+}
+
+function renderStoreReturnsTab(f){
+  document.getElementById('kpi-row').innerHTML = '';
+  const rows = (DATA.store_returns || []).filter(r => storeReturnsMatchesFilter(r, f) && !storeReturnsExcluded(r));
+  const months = [...new Set(rows.map(r => r.month_key))].sort();
+
+  const g1Map = {};
+  rows.forEach(r => {
+    if (!g1Map[r.month_key]) g1Map[r.month_key] = { qty: 0, cogs: 0 };
+    g1Map[r.month_key].qty += r.qty;
+    g1Map[r.month_key].cogs += r.cogs_value;
+  });
+  const g1Rows = months.map(mk => ({
+    month_key: mk, label: monthLabelFull(mk), qty: g1Map[mk].qty, cogs: g1Map[mk].cogs,
+  }));
+
+  const { l1Totals, catTotals } = storeReturnsL1CatTotals(rows);
+  const hasMeta = storeReturnsCategoryHasMeta(rows);
+
+  const g2Items = storeReturnsGroupByRow(rows,
+    r => r.l1 + '|' + r.cat,
+    r => ({ l1: r.l1, cat: r.cat })
+  ).sort(storeReturnsRowSort(l1Totals, catTotals, hasMeta, false));
+
+  const g3Items = storeReturnsGroupByRow(rows,
+    r => r.l1 + '|' + r.cat + '|' + storeReturnsFitOf(r),
+    r => ({ l1: r.l1, cat: r.cat, fit: storeReturnsFitOf(r) })
+  ).sort(storeReturnsRowSort(l1Totals, catTotals, hasMeta, true));
+
+  const g2Display = storeReturnsBuildG2Display(g2Items);
+  const g3Display = storeReturnsBuildG3Display(g3Items);
+
+  document.getElementById('storereturns-root').innerHTML = `
+    <div class="card-section">
+      <h2>MoM Returns <span class="rule"></span></h2>
+      <div style="overflow-x:auto;">${storeReturnsGrid1TableHTML(g1Rows)}</div>
+      <div style="margin-top:22px;">${storeReturnsTrendChart(g1Rows)}</div>
+    </div>
+    <div class="card-section">
+      <h2>Category <span class="rule"></span> <span class="count">${g2Items.length} rows</span></h2>
+      <div style="overflow-x:auto;">${storeReturnsBreakdownTableHTML(g2Display, months, false)}</div>
+    </div>
+    <div class="card-section">
+      <h2>Category × Fit <span class="rule"></span> <span class="count">${g3Items.length} rows</span></h2>
+      <div style="overflow-x:auto;">${storeReturnsBreakdownTableHTML(g3Display, months, true)}</div>
+    </div>`;
+}
+
 
 function clicksMonthlyExcluded(r){
   const sku = (r.sku_group || '').toUpperCase();
@@ -1496,8 +2258,7 @@ function renderExecSummary(){
   strip.innerHTML = DASHBOARD_BLOCKS.map(bd => pivotBlockV2(bd, [wholeBusiness], fakeDef, ledgers, 'summary_whole', {mode:'meta', key:'sales', dir:'desc'})).join('');
   section.appendChild(strip);
   root.appendChild(section);
-}function renderReturnsTab(){
-  const root = document.getElementById('returns-root');
+}function renderReturnsInoutSubtab(root){
   root.innerHTML = '';
 
   const note = document.createElement('div');
@@ -1596,6 +2357,120 @@ function renderExecSummary(){
   });
 }
 
+// Top-level Returns tab: 2 sub-tabs -- "Inout" (the existing Learned/Input
+// return-rate editor the simulator actually uses, unchanged) and "Returns
+// Analysis" (a NEW breakdown of ACTUAL returns data, mirroring the
+// L1/Category/Meta leaf-drill structure used elsewhere, with a selectable
+// time grain and date range).
+function renderReturnsTab(){
+  const outerRoot = document.getElementById('returns-root');
+  outerRoot.innerHTML = '';
+
+  const tabBar = document.createElement('div');
+  tabBar.style.cssText = 'display:flex; gap:8px; margin-bottom:16px;';
+  const subtabs = [{id:'inout', label:'Inout'}, {id:'analysis', label:'Returns Analysis'}];
+  window._returnsSubtab = window._returnsSubtab || 'inout';
+  subtabs.forEach(t => {
+    const btn = document.createElement('button');
+    btn.textContent = t.label;
+    const active = window._returnsSubtab === t.id;
+    btn.style.cssText = `padding:8px 16px; border-radius:6px; border:1px solid var(--line); cursor:pointer; font-family:'IBM Plex Mono', monospace; font-size:12px; ${active ? 'background:var(--amber); color:#000; font-weight:600;' : 'background:var(--panel-2); color:var(--text);'}`;
+    btn.addEventListener('click', () => { window._returnsSubtab = t.id; renderReturnsTab(); });
+    tabBar.appendChild(btn);
+  });
+  outerRoot.appendChild(tabBar);
+
+  const content = document.createElement('div');
+  outerRoot.appendChild(content);
+
+  if (window._returnsSubtab === 'inout'){
+    renderReturnsInoutSubtab(content);
+  } else {
+    renderReturnsAnalysisSubtab(content);
+  }
+}
+
+let returnsAnalysisStart = null, returnsAnalysisEnd = null;
+
+function renderReturnsAnalysisSubtab(root){
+  const latest = latestDataDate();
+  if (!returnsAnalysisStart) returnsAnalysisStart = isoAddDays(latest, -180);
+  if (!returnsAnalysisEnd) returnsAnalysisEnd = latest;
+
+  const controls = document.createElement('div');
+  controls.className = 'filter-bar';
+  controls.style.marginBottom = '16px';
+  controls.innerHTML = dateRangeHtml('returns-an', returnsAnalysisStart, returnsAnalysisEnd);
+  root.appendChild(controls);
+  attachDateRangeHandlers(controls, 'returns-an', () => returnsAnalysisStart, () => returnsAnalysisEnd, (s,e) => { returnsAnalysisStart = s; returnsAnalysisEnd = e; render(); });
+
+  const note = document.createElement('div');
+  note.className = 'empty-note';
+  note.textContent = 'Breakdown of ACTUAL returns data (from returns_actual.json), by Channel x L1 x Category, Monthly grain (this dataset is monthly-grain at source, so DoD/WoW aren\'t available here -- Analytics tab covers those grains for other metrics). Select a date range above; rows are colored red(low)->green(high) per column, same convention as elsewhere.';
+  root.appendChild(note);
+
+  const monthList = monthsInRange(returnsAnalysisStart, returnsAnalysisEnd);
+  const rows = (DATA.returns_actual || []).filter(r => monthList.includes(r.month));
+
+  // Group by Channel x L1 x Category (leaf-level, same dimensions the rest of
+  // the dashboard filters on) -- one row per combo, one column per month.
+  const groupMap = {};
+  rows.forEach(r => {
+    const key = [r.channel, r.l1, r.cat].join('||');
+    const g = groupMap[key] || (groupMap[key] = { channel: r.channel, l1: r.l1, cat: r.cat, byMonth: {} });
+    const cell = g.byMonth[r.month] || (g.byMonth[r.month] = { sales_qty: 0, return_qty: 0 });
+    cell.sales_qty += (r.sales_qty || 0);
+    cell.return_qty += (r.return_qty || 0);
+  });
+  const groups = Object.values(groupMap).sort((a,b) => (a.channel||'').localeCompare(b.channel||'') || (a.l1||'').localeCompare(b.l1||'') || (a.cat||'').localeCompare(b.cat||''));
+
+  if (groups.length === 0){
+    root.innerHTML += `<div class="empty-note">No returns data in this date range.</div>`;
+    return;
+  }
+
+  const cellPct = (g, m) => {
+    const c = g.byMonth[m];
+    if (!c || (c.sales_qty + c.return_qty) === 0) return null;
+    return c.return_qty / (c.sales_qty + c.return_qty) * 100; // return% of gross (sales+returns), consistent with return-rate convention elsewhere
+  };
+  const allPcts = [];
+  groups.forEach(g => monthList.forEach(m => { const p = cellPct(g,m); if (p !== null) allPcts.push(p); }));
+  const maxPct = allPcts.length ? Math.max(...allPcts) : 1;
+  const minPct = allPcts.length ? Math.min(...allPcts) : 0;
+  const cellBg = (p) => {
+    if (p === null) return '';
+    const t = maxPct > minPct ? (p - minPct)/(maxPct - minPct) : 1; // higher return% = worse = red
+    const r = Math.round(111 + t*(193-111)), g = Math.round(163 + t*(89-163)), b = Math.round(131 + t*(74-131));
+    return `background:rgba(${r},${g},${b},0.32);`;
+  };
+
+  const section = document.createElement('div');
+  section.className = 'card-section';
+  section.innerHTML = `<h2>Return% by Channel \u00d7 L1 \u00d7 Category <span class="rule"></span><span class="count">${groups.length} combos \u00d7 ${monthList.length} months</span></h2>`;
+  const strip = document.createElement('div');
+  strip.className = 'pivot-strip';
+  strip.innerHTML = `<div class="pivot-block" style="min-width:100%;">
+    <table class="ptable">
+      <thead><tr><th style="text-align:left;">Channel</th><th style="text-align:left;">L1</th><th style="text-align:left;">Category</th>${monthList.map(m => `<th>${m}</th>`).join('')}</tr></thead>
+      <tbody>
+        ${groups.map(g => `<tr>
+          <td class="rowlabel">${g.channel||'\u2014'}</td><td class="rowlabel">${g.l1||'\u2014'}</td><td class="rowlabel">${g.cat||'\u2014'}</td>
+          ${monthList.map(m => { const p = cellPct(g,m); return `<td style="${cellBg(p)}">${p===null ? '\u2014' : p.toFixed(1)+'%'}</td>`; }).join('')}
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+  section.appendChild(strip);
+
+  const csvColumns = [
+    {key:'channel', label:'Channel'}, {key:'l1', label:'L1'}, {key:'cat', label:'Category'},
+    ...monthList.map(m => ({key:m, label:m, render: r => { const p = cellPct(r, m); return p===null ? '' : p.toFixed(1); }}))
+  ];
+  addDownloadButton(section, 'returns_analysis.csv', groups, csvColumns);
+  root.appendChild(section);
+}
+
 // ===========================================================================
 // ANALYTICS TAB -- DoD / WoW / MTD / MoM across Sales, Returns (actual, from
 // Snowflake RETURNS_DATA), Inv changes, DOI, STR, sliced by 9 dimensions.
@@ -1607,6 +2482,11 @@ let analyticsMetric = 'sales'; // 'sales' | 'returns' | 'pipeline' | 'inv' | 'do
 let analyticsDimId = 'channel';
 let analyticsCustomStart = null;
 let analyticsCustomEnd = null;
+// Independent comparison-window overrides for Custom Range only. Null means
+// "auto" -- fall back to the immediately-preceding-period-of-same-length
+// behavior that existed before, so nothing changes unless the user sets these.
+let analyticsCustomCompareStart = null;
+let analyticsCustomCompareEnd = null;
 
 const ANALYTICS_DIMS = [
   {id:'channel', label:'Channel',                    dims:['channel']},
@@ -1654,14 +2534,25 @@ function latestDataDate(){
   return latest || new Date().toISOString().slice(0,10);
 }
 // Returns {curStart, curEnd, priorStart, priorEnd, label} -- all inclusive, 'YYYY-MM-DD'.
-function analyticsPeriodRange(period, customStart, customEnd){
+function analyticsPeriodRange(period, customStart, customEnd, customCompareStart, customCompareEnd){
   const latest = latestDataDate();
   if (period === 'custom' && customStart && customEnd){
     const days = (new Date(customEnd) - new Date(customStart)) / 86400000 + 1;
+    // If the user has set an explicit comparison window, use it as-is -- this
+    // is what makes "current" and "comparison" independently choosable for
+    // Custom Range (the 4 fixed presets above are untouched and still
+    // auto-derive their comparison window).
+    if (customCompareStart && customCompareEnd){
+      return {
+        curStart: customStart, curEnd: customEnd,
+        priorStart: customCompareStart, priorEnd: customCompareEnd,
+        label: `Custom: ${customStart} \u2192 ${customEnd} vs your chosen comparison window`
+      };
+    }
     return {
       curStart: customStart, curEnd: customEnd,
       priorStart: isoAddDays(customStart, -days), priorEnd: isoAddDays(customStart, -1),
-      label: `Custom range vs the ${days}-day period immediately before it`
+      label: `Custom range vs the ${days}-day period immediately before it (auto -- set a comparison window below to override)`
     };
   }
   if (period === 'dod'){
@@ -1876,6 +2767,13 @@ function renderAnalyticsTab(){
       <div class="filter-group" id="an-custom-end" style="display:none;"><label>To</label>
         <input type="date" id="an-date-end" style="background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:8px 10px; border-radius:6px; font-family:'IBM Plex Mono', monospace; font-size:12px;">
       </div>
+      <div class="filter-group" id="an-custom-compare-start" style="display:none;"><label>Compare From <span style="color:var(--thread); font-weight:400;">(optional)</span></label>
+        <input type="date" id="an-compare-date-start" style="background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:8px 10px; border-radius:6px; font-family:'IBM Plex Mono', monospace; font-size:12px;">
+      </div>
+      <div class="filter-group" id="an-custom-compare-end" style="display:none;"><label>Compare To <span style="color:var(--thread); font-weight:400;">(optional)</span></label>
+        <input type="date" id="an-compare-date-end" style="background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:8px 10px; border-radius:6px; font-family:'IBM Plex Mono', monospace; font-size:12px;">
+      </div>
+      <button id="an-compare-reset" style="display:none; background:transparent; border:1px solid var(--amber-dim); color:var(--amber); padding:8px 12px; border-radius:6px; font-size:11px; font-family:'IBM Plex Mono', monospace; cursor:pointer;">Reset to auto</button>
     </div>
     <div class="empty-note" id="an-period-label" style="color:var(--thread); font-weight:600;"></div>
     <div class="empty-note" id="an-range-note"></div>
@@ -1889,20 +2787,33 @@ function renderAnalyticsTab(){
   });
 
   const showCustom = analyticsPeriod === 'custom';
-  document.getElementById('an-custom-start').style.display = showCustom ? '' : 'none';
-  document.getElementById('an-custom-end').style.display = showCustom ? '' : 'none';
+  ['an-custom-start','an-custom-end','an-custom-compare-start','an-custom-compare-end','an-compare-reset'].forEach(id => {
+    document.getElementById(id).style.display = showCustom ? '' : 'none';
+  });
   if (showCustom){
     const latest = latestDataDate();
     const startEl = document.getElementById('an-date-start');
     const endEl = document.getElementById('an-date-end');
+    const cmpStartEl = document.getElementById('an-compare-date-start');
+    const cmpEndEl = document.getElementById('an-compare-date-end');
     startEl.value = analyticsCustomStart || isoAddDays(latest, -6);
     endEl.value = analyticsCustomEnd || latest;
+    cmpStartEl.value = analyticsCustomCompareStart || '';
+    cmpEndEl.value = analyticsCustomCompareEnd || '';
     startEl.addEventListener('change', e => { analyticsCustomStart = e.target.value; render(); });
     endEl.addEventListener('change', e => { analyticsCustomEnd = e.target.value; render(); });
+    // Comparison window is fully independent -- picking a "Compare From"
+    // without a "Compare To" (or vice versa) intentionally does NOT apply
+    // yet; analyticsPeriodRange only overrides once BOTH are set.
+    cmpStartEl.addEventListener('change', e => { analyticsCustomCompareStart = e.target.value || null; render(); });
+    cmpEndEl.addEventListener('change', e => { analyticsCustomCompareEnd = e.target.value || null; render(); });
+    document.getElementById('an-compare-reset').addEventListener('click', () => {
+      analyticsCustomCompareStart = null; analyticsCustomCompareEnd = null; render();
+    });
   }
 
   const f = getFilters();
-  const range = analyticsPeriodRange(analyticsPeriod, analyticsCustomStart, analyticsCustomEnd);
+  const range = analyticsPeriodRange(analyticsPeriod, analyticsCustomStart, analyticsCustomEnd, analyticsCustomCompareStart, analyticsCustomCompareEnd);
   document.getElementById('an-period-label').textContent = range.label || '';
   document.getElementById('an-range-note').textContent =
     `Current window: ${range.curStart} → ${range.curEnd}   |   Comparison window: ${range.priorStart} → ${range.priorEnd}`;
@@ -2037,6 +2948,12 @@ function ensureParetoDateDefaults(){
 }
 let paretoSort = {key:'metric_value', dir:'desc'};
 let quartileSort = {key:'metric_value', dir:'desc'};
+let paretoGmMin = 0, paretoGmMax = 100;
+let quartileGmMin = 0, quartileGmMax = 100;
+let paretoAgeingBuckets = [];   // empty = no filter
+let quartileAgeingBuckets = [];
+let paretoSkuSearch = '';
+let quartileSkuSearch = '';
 
 function skuThumb(skuGroup){
   const url = (DATA.images || {})[skuGroup];
@@ -2061,7 +2978,49 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbo
 // salesMatches(row,f) + MONTHS) down to one row per sku_group, summing EVERY
 // numeric field (not just the selected metric) so any column can be sorted,
 // and attaches the matching Returns figure for that sku_group.
-function aggregateBySkuGroup(salesBySku, returnsMap){
+// Earliest month each sku_group appears in ANY sales_by_sku data (not just the
+// currently-selected date range) -- used as a "went live" proxy for ROS, so a
+// SKU that only started selling partway through a longer selected range
+// doesn't get its daily rate diluted by days it couldn't possibly have sold.
+let _liveStartMonthCache = null;
+function buildLiveStartMonthMap(){
+  if (_liveStartMonthCache) return _liveStartMonthCache;
+  const map = {};
+  (DATA.sales_by_sku || []).forEach(r => {
+    if (!r.sku_group) return;
+    if (!map[r.sku_group] || r.month < map[r.sku_group]) map[r.sku_group] = r.month;
+  });
+  return _liveStartMonthCache = map;
+}
+function monthToFirstDate(monthKey){ return monthKey + '-01'; }
+
+function buildInwardsBySkuMap(){
+  if (_inwardsBySkuMapCache) return _inwardsBySkuMapCache;
+  const map = {};
+  (DATA.inwards_by_sku || []).forEach(r => { map[r.sku_group] = r; });
+  return _inwardsBySkuMapCache = map;
+}
+function buildStoreInvBySkuMap(){
+  if (_storeInvBySkuMapCache) return _storeInvBySkuMapCache;
+  const map = {};
+  (DATA.store_inv_by_sku || []).forEach(r => { map[r.sku_group] = r; });
+  return _storeInvBySkuMapCache = map;
+}
+function buildAgeingBySkuMap(){
+  if (_ageingBySkuMapCache) return _ageingBySkuMapCache;
+  const map = {};
+  (DATA.ageing_by_sku || []).forEach(r => { map[r.sku_group] = r; });
+  return _ageingBySkuMapCache = map;
+}
+function buildPipelineBySkuMap(){
+  if (_pipelineBySkuMapCache) return _pipelineBySkuMapCache;
+  const map = {};
+  (DATA.pipeline_by_sku || []).forEach(r => { map[r.sku_group] = r; });
+  return _pipelineBySkuMapCache = map;
+}
+let _inwardsBySkuMapCache = null, _storeInvBySkuMapCache = null, _ageingBySkuMapCache = null, _pipelineBySkuMapCache = null;
+
+function aggregateBySkuGroup(salesBySku, returnsMap, inwardsMap, storeInvMap, ageingMap, pipelineMap){
   const byGroup = {};
   salesBySku.forEach(r => {
     if (!r.sku_group) return;
@@ -2076,8 +3035,124 @@ function aggregateBySkuGroup(salesBySku, returnsMap){
   });
   Object.values(byGroup).forEach(g => {
     g.return_qty = returnsMap[g.sku_group] || 0;
+    const inw = inwardsMap[g.sku_group];
+    g.lifetime_inward_qty = inw ? inw.lifetime_qty : 0;
+    g.lifetime_inward_cogs_value = inw ? inw.lifetime_cogs_value : 0;
+    g.latest_inward_date = inw ? inw.latest_inward_date : null;
+    g.latest_inward_qty = inw ? inw.latest_inward_qty : null;
+    // Current Inv = online (Warehouse) + offline (Store) qty from the latest
+    // available month in inv_for_auto_detail -- NOT channel-filterable (this
+    // source has no per-order-channel split, only Warehouse/Store location).
+    const inv = storeInvMap[g.sku_group];
+    g.current_online_qty = inv ? inv.current_online_qty : null;
+    g.current_offline_qty = inv ? inv.current_offline_qty : null;
+    g.current_inv = inv ? (inv.current_online_qty + inv.current_offline_qty) : null;
+    g.current_store_count = inv ? inv.current_store_count : null;
+    g.lifetime_store_count = inv ? inv.lifetime_store_count : null;
+    // Ageing = latest snapshot (see AGEING_BY_SKU_QUERY) -- also not tied to
+    // any particular date range/channel, it's a single current-state snapshot.
+    const ag = ageingMap[g.sku_group];
+    g.weighted_age_days = ag ? ag.weighted_age_days : null;
+    g.ageing_bucket = ag ? ag.ageing_bucket : null;
+    // Pipeline (pending/expected inwards) -- true SKU_GROUP grain via
+    // NORMALIZED_SKU, from production_pipeline_data_v2. No STATUS filter
+    // applied (matches the Google-Sheets Pipeline dataset's own convention).
+    const pipe = pipelineMap ? pipelineMap[g.sku_group] : null;
+    g.pipeline_pending_qty = pipe ? pipe.pending_qty : 0;
   });
   return Object.values(byGroup);
+}
+
+// Generic tiny inline sparkline for table cells. `refValue` (optional) draws
+// a dashed horizontal reference line -- used for GM%'s 55% ideal-minimum line.
+// Color is amber by default; pass 'good'/'bad' segments via refValue+belowIsBad
+// only affects the reference line color, the trend line itself stays neutral
+// so it doesn't fight with the GM%-below-55% red badge already on that cell.
+function sparklineSvg(values, {width=70, height=22, refValue=null, belowIsBad=true} = {}){
+  const clean = values.map(v => (v===null||v===undefined||isNaN(v)) ? null : v);
+  const present = clean.filter(v => v !== null);
+  if (present.length < 2) return '<span style="color:var(--line); font-size:11px;">—</span>';
+  const allVals = refValue !== null ? [...present, refValue] : present;
+  const min = Math.min(...allVals), max = Math.max(...allVals);
+  const range = (max - min) || 1;
+  const padY = 2;
+  const n = clean.length;
+  const x = i => (i / (n - 1)) * width;
+  const y = v => height - padY - ((v - min) / range) * (height - padY*2);
+  let path = '', started = false;
+  clean.forEach((v,i) => {
+    if (v === null) { started = false; return; }
+    path += (started ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(v).toFixed(1) + ' ';
+    started = true;
+  });
+  const lastIdx = clean.map((v,i)=>v!==null?i:-1).filter(i=>i>=0).pop();
+  const lastV = clean[lastIdx];
+  const refLine = refValue !== null
+    ? `<line x1="0" y1="${y(refValue).toFixed(1)}" x2="${width}" y2="${y(refValue).toFixed(1)}" stroke="var(--red)" stroke-width="1" stroke-dasharray="2,2" opacity="0.6"></line>`
+    : '';
+  const dotColor = refValue !== null ? (lastV >= refValue === belowIsBad ? 'var(--green)' : (lastV < refValue && belowIsBad ? 'var(--red)' : 'var(--amber)')) : 'var(--amber)';
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="display:block;">
+    ${refLine}
+    <path d="${path.trim()}" fill="none" stroke="var(--thread)" stroke-width="1.5"></path>
+    <circle cx="${x(lastIdx).toFixed(1)}" cy="${y(lastV).toFixed(1)}" r="2" fill="${dotColor}"></circle>
+  </svg>`;
+}
+
+// Per-SKU monthly history within the selected date range, for sparklines.
+// Returns {sku_group: {months:[...], gmPct:[...], qty:[...]}} -- built once
+// per render pass from the already date/filter-scoped salesBySku rows.
+// `onlySkus` (optional Set/array) restricts the output (and the work done)
+// to just those SKUs -- pass the rows actually being displayed, NOT the full
+// unfiltered catalog, or this silently does O(every SKU that ever existed)
+// work on every render even when only a handful of rows are shown after
+// filtering/sorting/slider limits.
+function buildSkuMonthlyHistory(salesBySku, monthList, onlySkus){
+  const allowSet = onlySkus ? new Set(onlySkus) : null;
+  const byGroup = {};
+  salesBySku.forEach(r => {
+    if (!r.sku_group) return;
+    if (allowSet && !allowSet.has(r.sku_group)) return;
+    const g = byGroup[r.sku_group] || (byGroup[r.sku_group] = {});
+    const m = g[r.month] || (g[r.month] = {gross_sales:0, qty:0, cogs_sold:0});
+    m.gross_sales += (r.gross_sales || 0);
+    m.qty += (r.qty || 0);
+    m.cogs_sold += (r.cogs_sold || 0);
+  });
+  const out = {};
+  Object.keys(byGroup).forEach(sku => {
+    const monthsData = byGroup[sku];
+    out[sku] = {
+      months: monthList,
+      gmPct: monthList.map(m => {
+        const d = monthsData[m];
+        return (d && d.gross_sales > 0) ? ((d.gross_sales - d.cogs_sold) / d.gross_sales * 100) : null;
+      }),
+      qty: monthList.map(m => (monthsData[m] ? monthsData[m].qty : null)),
+    };
+  });
+  return out;
+}
+
+
+// that range. "Live start" = the earliest month it has ANY sales data at all
+// (across the full available history, not just this range) -- if that's after
+// the range even starts, the SKU wasn't live for part or all of the range and
+// we shrink the day-count accordingly (or return null if not live at all yet
+// within the range).
+// ROS = qty sold in the selected range / days the SKU was actually live within
+// that range. "Live start" = the earliest month it has ANY sales data at all
+// (across the full available history, not just this range) -- if that's after
+// the range even starts, the SKU wasn't live for part or all of the range and
+// we shrink the day-count accordingly (or return null if not live at all yet
+// within the range).
+function computeROS(qtyInRange, sku_group, rangeStart, rangeEnd, liveStartMonthMap){
+  const liveStartMonth = liveStartMonthMap[sku_group];
+  if (!liveStartMonth) return null; // no sales history for this SKU at all
+  const liveStartDate = monthToFirstDate(liveStartMonth);
+  if (liveStartDate > rangeEnd) return null; // wasn't live yet within this range at all
+  const effectiveStart = liveStartDate > rangeStart ? liveStartDate : rangeStart;
+  const days = Math.max(1, (new Date(rangeEnd) - new Date(effectiveStart)) / 86400000 + 1);
+  return qtyInRange / days;
 }
 
 // Builds sku_group -> total return_qty for the currently-active period (MONTHS
@@ -2098,11 +3173,25 @@ function monthsInRange(startDate, endDate){
   return months;
 }
 
-function buildReturnsBySkuMap(monthList){
-  const map = {};
+// Indexed once per DATA load (not per render) -- returns_by_sku grouped by
+// month, so buildReturnsBySkuMap only has to touch the months actually in
+// range instead of scanning every row on every slider drag/filter change.
+let _returnsBySkuByMonthCache = null;
+function returnsBySkuByMonthIndex(){
+  if (_returnsBySkuByMonthCache) return _returnsBySkuByMonthCache;
+  const byMonth = {};
   (DATA.returns_by_sku || []).forEach(r => {
-    if (!monthList.includes(r.month)) return;
-    map[r.sku_group] = (map[r.sku_group] || 0) + (r.return_qty || 0);
+    (byMonth[r.month] || (byMonth[r.month] = [])).push(r);
+  });
+  return _returnsBySkuByMonthCache = byMonth;
+}
+function buildReturnsBySkuMap(monthList){
+  const idx = returnsBySkuByMonthIndex();
+  const map = {};
+  monthList.forEach(m => {
+    (idx[m] || []).forEach(r => {
+      map[r.sku_group] = (map[r.sku_group] || 0) + (r.return_qty || 0);
+    });
   });
   return map;
 }
@@ -2110,9 +3199,14 @@ function buildReturnsBySkuMap(monthList){
 // Shared pipeline for both tabs: aggregate -> sort desc by the chosen Rank/
 // Split-By metric -> cumulative value % and SKU-count % (rank position), plus
 // every derived field needed for the fixed column set (ASP, GM%, Discount, etc).
-function computeParetoRows(salesBySku, rankMetricKey, monthList){
+function computeParetoRows(salesBySku, rankMetricKey, monthList, rangeStart, rangeEnd){
   const returnsMap = buildReturnsBySkuMap(monthList);
-  const rows = aggregateBySkuGroup(salesBySku, returnsMap);
+  const inwardsMap = buildInwardsBySkuMap();
+  const storeInvMap = buildStoreInvBySkuMap();
+  const ageingMap = buildAgeingBySkuMap();
+  const pipelineMap = buildPipelineBySkuMap();
+  const liveStartMonthMap = buildLiveStartMonthMap();
+  const rows = aggregateBySkuGroup(salesBySku, returnsMap, inwardsMap, storeInvMap, ageingMap, pipelineMap);
   rows.forEach(g => {
     g.asp = g.qty > 0 ? (g.gross_sales / g.qty) : 0;
     g.gm_pct = g.gross_sales > 0 ? ((g.gross_sales - g.cogs_sold) / g.gross_sales * 100) : null;
@@ -2125,6 +3219,7 @@ function computeParetoRows(salesBySku, rankMetricKey, monthList){
     g.return_value = g.return_qty * g.asp;
     g.net_value = g.gross_sales - g.return_value;
     g.rank_value = g[rankMetricKey] ?? g.gross_sales;
+    g.ros = computeROS(g.qty, g.sku_group, rangeStart, rangeEnd, liveStartMonthMap);
   });
   rows.sort((a,b) => b.rank_value - a.rank_value);
   const total = rows.reduce((s,r) => s + r.rank_value, 0);
@@ -2139,6 +3234,25 @@ function computeParetoRows(salesBySku, rankMetricKey, monthList){
     r.quartile = r.cum_pct <= 25 ? 1 : r.cum_pct <= 50 ? 2 : r.cum_pct <= 75 ? 3 : 4;
   });
   return { rows, total, grossTotal };
+}
+
+// Recomputes cum_value/cum_pct/sku_count/count_pct/quartile on a rows array
+// that's ALREADY been filtered (date range, GM% range, ageing bucket, etc) --
+// used by the Quartile tab so Q1-Q4 boundaries reflect the currently-visible
+// universe, not the pre-filter full SKU list. Mutates and returns `rows`
+// (must already be sorted by rank_value desc, same as computeParetoRows does).
+function recomputeQuartilesForFilteredRows(rows){
+  const total = rows.reduce((s,r) => s + r.rank_value, 0);
+  let cum = 0;
+  rows.forEach((r, i) => {
+    cum += r.rank_value;
+    r.cum_value = cum;
+    r.cum_pct = total > 0 ? (cum/total*100) : 0;
+    r.sku_count = i + 1;
+    r.count_pct = rows.length > 0 ? ((i+1)/rows.length*100) : 0;
+    r.quartile = r.cum_pct <= 25 ? 1 : r.cum_pct <= 50 ? 2 : r.cum_pct <= 75 ? 3 : 4;
+  });
+  return rows;
 }
 
 function metricSelectHtml(idPrefix){
@@ -2157,6 +3271,111 @@ function sliderHtml(idPrefix, value){
   </div>`;
 }
 
+// GM% filter -- two number inputs (min/max) plus a visual dual-track range,
+// matching the reference "Price" slider design. True dual-handle sliders need
+// two overlapping <input type=range> elements since HTML has no native
+// two-thumb slider; the number inputs are the primary/reliable way to set
+// exact values, the sliders are a visual/quick-drag aid kept in sync with them.
+function gmRangeHtml(idPrefix, minVal, maxVal){
+  return `<div class="filter-group" style="min-width:260px;">
+    <label>GM% Range</label>
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+      <input type="number" id="${idPrefix}-gm-min-input" value="${minVal}" min="0" max="100" step="1"
+        style="width:70px; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:6px 8px; border-radius:6px; font-family:'IBM Plex Mono', monospace; font-size:12px;">
+      <span style="color:var(--text-faint);">\u2013</span>
+      <input type="number" id="${idPrefix}-gm-max-input" value="${maxVal}" min="0" max="100" step="1"
+        style="width:70px; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:6px 8px; border-radius:6px; font-family:'IBM Plex Mono', monospace; font-size:12px;">
+      <span style="color:var(--text-faint); font-size:11px;">%</span>
+    </div>
+    <div style="position:relative; height:20px;">
+      <input type="range" id="${idPrefix}-gm-min-slider" min="0" max="100" value="${minVal}" style="position:absolute; width:100%; accent-color: var(--amber); pointer-events:none;">
+      <input type="range" id="${idPrefix}-gm-max-slider" min="0" max="100" value="${maxVal}" style="position:absolute; width:100%; accent-color: var(--amber); pointer-events:none;">
+    </div>
+  </div>`;
+}
+function attachGmRangeHandlers(controls, idPrefix, onChange){
+  const minInput = controls.querySelector(`#${idPrefix}-gm-min-input`);
+  const maxInput = controls.querySelector(`#${idPrefix}-gm-max-input`);
+  const minSlider = controls.querySelector(`#${idPrefix}-gm-min-slider`);
+  const maxSlider = controls.querySelector(`#${idPrefix}-gm-max-slider`);
+  // sliders are visual/pointer-events:none by default (avoids fighting for the
+  // same track); re-enable pointer events only on whichever thumb is nearer
+  // to a click, standard trick for faking a dual-range with two overlaid inputs.
+  [minSlider, maxSlider].forEach(s => { s.style.pointerEvents = 'auto'; });
+  minSlider.style.zIndex = 2;
+  maxSlider.style.zIndex = 1;
+  // Dragging a <input type=range> fires 'input' continuously (many times per
+  // second) -- calling the full onChange (which triggers a full render(),
+  // recomputing Pareto/Quartile rows + sparklines for every SKU) on EVERY
+  // tick was the main cause of the dashboard feeling slow while dragging this
+  // slider. Fix: update the visible number/thumb position immediately (cheap,
+  // no re-render), but debounce the actual onChange/render call until
+  // dragging pauses for ~120ms.
+  let debounceTimer;
+  function commit(min, max, immediate){
+    if (min > max) [min, max] = [max, min];
+    minInput.value = min; maxInput.value = max;
+    minSlider.value = min; maxSlider.value = max;
+    clearTimeout(debounceTimer);
+    if (immediate){ onChange(min, max); }
+    else { debounceTimer = setTimeout(() => onChange(min, max), 120); }
+  }
+  minInput.addEventListener('change', () => commit(parseFloat(minInput.value)||0, parseFloat(maxInput.value)||100, true));
+  maxInput.addEventListener('change', () => commit(parseFloat(minInput.value)||0, parseFloat(maxInput.value)||100, true));
+  minSlider.addEventListener('input', () => commit(parseFloat(minSlider.value), parseFloat(maxInput.value)||100, false));
+  maxSlider.addEventListener('input', () => commit(parseFloat(minInput.value)||0, parseFloat(maxSlider.value), false));
+  // Fire once immediately when the drag actually ends, so the final position
+  // isn't left waiting on the debounce timer.
+  minSlider.addEventListener('change', () => commit(parseFloat(minSlider.value), parseFloat(maxInput.value)||100, true));
+  maxSlider.addEventListener('change', () => commit(parseFloat(minInput.value)||0, parseFloat(maxSlider.value), true));
+}
+
+// Ageing-bucket multi-select filter (Pareto/Quartile). Empty selectedBuckets
+// array means "no filter" (show everything, including rows with no ageing
+// data at all) -- selecting any buckets restricts to just those, and rows
+// with no ageing_bucket are excluded once a filter is active since they
+// can't be said to belong to any selected bucket.
+// SKU Group text search -- simple substring match (case-insensitive) against
+// sku_group, so "SEARCH-something" typed in finds "MEN-SEARCH-SOMETHING-BLK"
+// etc without needing an exact match.
+function skuSearchHtml(idPrefix, value){
+  return `<div class="filter-group" style="min-width:200px;">
+    <label>SKU Group</label>
+    <input type="text" id="${idPrefix}-sku-search" value="${value || ''}" placeholder="Search SKU Group..."
+      style="width:100%; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:8px 10px; border-radius:6px; font-family:'IBM Plex Mono', monospace; font-size:12px;">
+  </div>`;
+}
+function attachSkuSearchHandler(controls, idPrefix, onChange){
+  const input = controls.querySelector(`#${idPrefix}-sku-search`);
+  let debounceTimer;
+  input.addEventListener('input', e => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => onChange(e.target.value), 250); // debounced -- avoid re-rendering the whole table on every keystroke
+  });
+}
+
+function ageingBucketFilterHtml(idPrefix, selectedBuckets){
+  const boxes = AGEING_BUCKET_ORDER.map(b => {
+    const checked = selectedBuckets.includes(b) ? 'checked' : '';
+    return `<label style="display:flex; align-items:center; gap:4px; font-size:11px; color:var(--text-faint); cursor:pointer;">
+      <input type="checkbox" class="${idPrefix}-ageing-bucket-cb" value="${b}" ${checked} style="accent-color:var(--amber);">${b}
+    </label>`;
+  }).join('');
+  return `<div class="filter-group" style="min-width:220px;">
+    <label>Inv Ageing</label>
+    <div style="display:flex; flex-wrap:wrap; gap:6px 10px; max-width:260px;">${boxes}</div>
+  </div>`;
+}
+function attachAgeingBucketFilterHandlers(controls, idPrefix, onChange){
+  controls.querySelectorAll(`.${idPrefix}-ageing-bucket-cb`).forEach(cb => {
+    cb.addEventListener('change', () => {
+      const selected = Array.from(controls.querySelectorAll(`.${idPrefix}-ageing-bucket-cb:checked`)).map(el => el.value);
+      onChange(selected);
+    });
+  });
+}
+
+
 function dateRangeHtml(idPrefix, startVal, endVal){
   return `
     <div class="filter-group"><label>From</label>
@@ -2174,28 +3393,66 @@ function fmtVal(v, metricKey){
 function fmtPct(v){ return (v === null || v === undefined) ? '—' : v.toFixed(1)+'%'; }
 function fmtMoney(v){ return (v === null || v === undefined) ? '—' : ('\u20b9' + fmtNum(v)); }
 
+const IDEAL_GM_PCT = 55; // per Aditya: minimum acceptable GM%, highlight below this
+
 // Fixed, always-visible column set (per Aditya's spec) -- not driven by the
 // Rank/Split By selector, which only controls sort order / quartile basis now.
-function paretoColumns(){
+function paretoColumns(rowsForColorScale, skuHistoryMap){
+  // Ageing color scale: intensity relative to the max weighted_age_days in the
+  // rows actually being shown (so it re-scales per filtered view, same
+  // approach as the Ageing tab's own heatmap). Falls back to no color if the
+  // caller didn't pass rows (keeps this function safe to call bare).
+  // Green -> Red (fresh -> old), matching the "lower age is better" reading.
+  const ageingMax = Math.max(1, ...(rowsForColorScale || []).map(r => r.weighted_age_days || 0));
+  const ageingBg = (days) => {
+    if (days === null || days === undefined) return '';
+    const t = Math.min(days / ageingMax, 1); // 0 = fresh/green, 1 = old/red
+    const r = Math.round(111 + t * (193 - 111));
+    const g = Math.round(163 + t * (89 - 163));
+    const b = Math.round(131 + t * (74 - 131));
+    return `background:rgba(${r},${g},${b},0.32);`;
+  };
   return [
-    {key:'sku_group', label:'SKU Group', align:'left'},
-    {key:'l1', label:'L1', align:'left'},
-    {key:'cat', label:'Cat', align:'left'},
-    {key:'m1', label:'M1', align:'left'},
-    {key:'m2', label:'M2', align:'left'},
-    {key:'m3', label:'M3', align:'left'},
+    {key:'image', label:'Image', sortable:false, render:r => skuThumb(r.sku_group), frozen:true, frozenLeft:0},
+    {key:'sku_group', label:'SKU Group', align:'left', frozen:true, frozenLeft:100},
+    {key:'l1', label:'L1', align:'left', narrow:true},
+    {key:'cat', label:'Cat', align:'left', narrow:true},
+    {key:'m1', label:'M1', align:'left', narrow:true},
+    {key:'m2', label:'M2', align:'left', narrow:true},
+    {key:'m3', label:'M3', align:'left', narrow:true},
     {key:'gross_sales', label:'Gross Sales', render:r => fmtMoney(r.gross_sales)},
     {key:'count_pct', label:'SKU Count %', render:r => fmtPct(r.count_pct)},
     {key:'qty', label:'Qty', render:r => Math.round(r.qty).toLocaleString()},
+    {key:'qty_trend', label:'Qty Trend', sortable:false, render:r => {
+      const h = skuHistoryMap && skuHistoryMap[r.sku_group];
+      if (!h) return '—';
+      return sparklineSvg(h.qty, {});
+    }},
+    {key:'ros', label:'ROS (units/day)', render:r => r.ros===null ? '—' : r.ros.toFixed(2)},
     {key:'asp', label:'ASP', render:r => fmtMoney(r.asp)},
-    {key:'gm_pct', label:'GM%', render:r => fmtPct(r.gm_pct)},
+    {key:'gm_pct', label:'GM% (min 55%)', render:r => {
+      if (r.gm_pct===null||r.gm_pct===undefined) return '—';
+      const below = r.gm_pct < IDEAL_GM_PCT;
+      return `<span style="${below ? 'background:rgba(193,89,74,0.25); color:var(--red); padding:2px 6px; border-radius:4px; display:inline-block;' : ''}">${r.gm_pct.toFixed(1)}%</span>`;
+    }},
+    {key:'gm_trend', label:'GM% Trend', sortable:false, render:r => {
+      const h = skuHistoryMap && skuHistoryMap[r.sku_group];
+      if (!h) return '—';
+      return sparklineSvg(h.gmPct, {refValue: IDEAL_GM_PCT, belowIsBad:true});
+    }},
     {key:'mrp_per_unit', label:'MRP', render:r => fmtMoney(r.mrp_per_unit)},
     {key:'mrp_value', label:'MRP Value', render:r => fmtMoney(r.mrp_value)},
     {key:'discount', label:'Discount', render:r => fmtMoney(r.discount)},
     {key:'discount_pct', label:'Discount %', render:r => fmtPct(r.discount_pct)},
+    {key:'return_qty', label:'Returned Qty', render:r => Math.round(r.return_qty).toLocaleString()},
     {key:'return_value', label:'Returns (Est.)', render:r => fmtMoney(r.return_value)},
     {key:'net_value', label:'Net', render:r => fmtMoney(r.net_value)},
-    {key:'image', label:'Image', sortable:false, render:r => skuThumb(r.sku_group)},
+    {key:'current_inv', label:'Current Inv', render:r => r.current_inv===null||r.current_inv===undefined ? '—' : Math.round(r.current_inv).toLocaleString()},
+    {key:'pipeline_pending_qty', label:'Pipeline (Pending Inward)', render:r => Math.round(r.pipeline_pending_qty||0).toLocaleString()},
+    {key:'ageing_bucket', label:'Ageing', render:r => r.ageing_bucket ? `<span style="${ageingBg(r.weighted_age_days)} padding:2px 6px; border-radius:4px; display:inline-block;">${r.ageing_bucket}${r.weighted_age_days!==null&&r.weighted_age_days!==undefined ? ' ('+r.weighted_age_days.toFixed(0)+'d)' : ''}</span>` : '—'},
+    {key:'lifetime_inward_qty', label:'Lifetime Inwards', render:r => Math.round(r.lifetime_inward_qty).toLocaleString()},
+    {key:'latest_inward_date', label:'Latest Inward Date', render:r => r.latest_inward_date || '—'},
+    {key:'latest_inward_qty', label:'Latest Inward Qty', render:r => r.latest_inward_qty===null||r.latest_inward_qty===undefined ? '—' : Math.round(r.latest_inward_qty).toLocaleString()},
   ];
 }
 
@@ -2214,16 +3471,29 @@ function sortRowsForDisplay(rows, sort){
 }
 
 function renderSkuTable(rows, columns, sort, cardIdPrefix, extraRowClass){
+  const cellClasses = (col) => {
+    const cls = [];
+    if (col.align==='left') cls.push('rowlabel');
+    if (col.narrow) cls.push('col-narrow');
+    if (col.frozen) cls.push('col-frozen');
+    return cls.join(' ');
+  };
+  const cellStyle = (col) => {
+    const parts = [];
+    if (col.align==='left') parts.push('text-align:left;');
+    if (col.frozen) parts.push(`left:${col.frozenLeft}px;`);
+    return parts.length ? `style="${parts.join('')}"` : '';
+  };
   const headerCells = columns.map(col => {
     const sortable = col.sortable !== false;
     const isActive = sort.key === col.key;
     const arrow = isActive ? (sort.dir === 'asc' ? ' \u25b2' : ' \u25bc') : '';
-    return `<th ${col.align==='left' ? 'style="text-align:left;"' : ''} ${sortable ? `class="sortable-th" data-sort-card="${cardIdPrefix}" data-sort-key="${col.key}"` : ''}>${col.label}${arrow}</th>`;
+    return `<th class="${cellClasses(col)} ${sortable ? 'sortable-th' : ''}" ${cellStyle(col)} ${sortable ? `data-sort-card="${cardIdPrefix}" data-sort-key="${col.key}"` : ''}>${col.label}${arrow}</th>`;
   }).join('');
   const bodyRows = rows.map((r,i) => `<tr class="${extraRowClass ? extraRowClass(r,i) : ''}">
-    ${columns.map(col => `<td class="${col.align==='left' ? 'rowlabel' : ''}">${col.render ? col.render(r) : (r[col.key] ?? '\u2014')}</td>`).join('')}
+    ${columns.map(col => `<td class="${cellClasses(col)}" ${cellStyle(col)}>${col.render ? col.render(r) : (r[col.key] ?? '\u2014')}</td>`).join('')}
   </tr>`).join('');
-  return `<table class="ptable"><thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table>`;
+  return `<table class="ptable sku-table"><thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table>`;
 }
 
 function attachSkuTableSortHandlers(container, cardIdPrefix, sortStateRef, onSortChange){
@@ -2235,6 +3505,45 @@ function attachSkuTableSortHandlers(container, cardIdPrefix, sortStateRef, onSor
       onSortChange({key, dir});
     });
   });
+}
+
+// Generic CSV download for any table -- columns need {key, label}, rows are
+// plain objects. Strips HTML from rendered cell values (renders often include
+// <span> wrappers for color-coding) so the CSV has clean plain-text values.
+function downloadCSV(filename, rows, columns){
+  const stripHtml = (v) => {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = String(v);
+    return tmp.textContent || tmp.innerText || '';
+  };
+  const escapeCsv = (v) => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+  };
+  const header = columns.map(c => escapeCsv(c.label)).join(',');
+  const body = rows.map(r => columns.map(c => {
+    const raw = c.render ? c.render(r) : (r[c.key] ?? '');
+    return escapeCsv(stripHtml(raw));
+  }).join(',')).join('\n');
+  const csv = header + '\n' + body;
+  const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// Adds a small "Download CSV" button into a card-section's <h2>, next to the
+// count badge -- consistent placement across every table that uses this.
+function addDownloadButton(sectionEl, filename, rows, columns){
+  const h2 = sectionEl.querySelector('h2');
+  if (!h2) return;
+  const btn = document.createElement('button');
+  btn.textContent = '\u2b07 CSV';
+  btn.style.cssText = 'margin-left:12px; background:transparent; border:1px solid var(--amber-dim); color:var(--amber); padding:3px 10px; border-radius:5px; font-size:11px; font-family:\'IBM Plex Mono\', monospace; cursor:pointer;';
+  btn.addEventListener('click', () => downloadCSV(filename, rows, columns));
+  h2.appendChild(btn);
 }
 
 function attachDateRangeHandlers(controls, idPrefix, getStart, getEnd, onChange){
@@ -2249,17 +3558,28 @@ function renderParetoTab(salesBySku, f){
 
   const controls = document.createElement('div');
   controls.className = 'pareto-controls';
-  controls.innerHTML = metricSelectHtml('pareto') + dateRangeHtml('pareto', paretoDateStart, paretoDateEnd) + sliderHtml('pareto', paretoCountPctLimit);
+  controls.innerHTML = metricSelectHtml('pareto') + dateRangeHtml('pareto', paretoDateStart, paretoDateEnd) + sliderHtml('pareto', paretoCountPctLimit) + gmRangeHtml('pareto', paretoGmMin, paretoGmMax) + ageingBucketFilterHtml('pareto', paretoAgeingBuckets) + skuSearchHtml('pareto', paretoSkuSearch);
   root.appendChild(controls);
   controls.querySelector('#pareto-metric').addEventListener('change', e => { paretoMetric = e.target.value; render(); });
   attachDateRangeHandlers(controls, 'pareto', () => paretoDateStart, () => paretoDateEnd, (s,e) => { paretoDateStart = s; paretoDateEnd = e; render(); });
+  attachGmRangeHandlers(controls, 'pareto', (min,max) => { paretoGmMin = min; paretoGmMax = max; render(); });
+  attachAgeingBucketFilterHandlers(controls, 'pareto', (selected) => { paretoAgeingBuckets = selected; render(); });
+  attachSkuSearchHandler(controls, 'pareto', (val) => { paretoSkuSearch = val; render(); });
   const slider = controls.querySelector('#pareto-slider');
   slider.addEventListener('input', e => { controls.querySelector('#pareto-slider-val').textContent = e.target.value; });
   slider.addEventListener('change', e => { paretoCountPctLimit = parseInt(e.target.value,10); render(); });
 
   const months = monthsInRange(paretoDateStart, paretoDateEnd);
   const scoped = salesBySku.filter(r => months.includes(r.month));
-  const { rows: allRows, grossTotal } = computeParetoRows(scoped, paretoMetric, months);
+  let { rows: allRows, grossTotal } = computeParetoRows(scoped, paretoMetric, months, paretoDateStart, paretoDateEnd);
+  allRows = allRows.filter(r => r.gm_pct===null || (r.gm_pct >= paretoGmMin && r.gm_pct <= paretoGmMax));
+  if (paretoAgeingBuckets.length){
+    allRows = allRows.filter(r => paretoAgeingBuckets.includes(r.ageing_bucket));
+  }
+  if (paretoSkuSearch.trim()){
+    const q = paretoSkuSearch.trim().toUpperCase();
+    allRows = allRows.filter(r => (r.sku_group||'').toUpperCase().includes(q));
+  }
   const rankLabel = PARETO_METRICS.find(m => m.id === paretoMetric).label;
 
   if (allRows.length === 0){
@@ -2292,10 +3612,10 @@ function renderParetoTab(salesBySku, f){
   const section = document.createElement('div');
   section.className = 'card-section';
   section.innerHTML = `<h2>Pareto \u2014 sku_group ranked by ${rankLabel} <span class="rule"></span><span class="count">${displayRows.length} of ${allRows.length} shown</span></h2>
-    <div class="empty-note">Range resolves to full months (${months.join(', ')}) -- data is monthly grain, not daily. SKU Count % denominator = all ${allRows.length} distinct SKU groups with sales in this range. Returns/Net are estimated (return qty \u00d7 that SKU's average ASP this period), not a directly sourced Rupee figure.</div>`;
+    <div class="empty-note">Range resolves to full months (${months.join(', ')}) -- data is monthly grain, not daily. SKU Count % denominator = all ${allRows.length} distinct SKU groups with sales in this range. Returns/Net are estimated (return qty \u00d7 that SKU's average ASP this period), not a directly sourced Rupee figure. ROS = qty sold in range ÷ days the SKU was actually live within that range (using its earliest known sales month as 'live start', not just the raw range length). Lifetime Inwards / Latest Inward are from real warehouse putaway events (not planning-stage Pipeline) — Latest Inward only counts events ≥ 50 units as a real restock, smaller ones are treated as incomplete. Current Inv = online (Warehouse) + offline (Store) qty from the latest available month, and Ageing is the latest snapshot (both are current-state, not tied to the date range above). SKU-level DOI and per-store presence breakdowns still pending. GM% below 55% (Ideal minimum) is highlighted red.</div>`;
   const strip = document.createElement('div');
   strip.className = 'pivot-strip';
-  const columns = paretoColumns();
+  const columns = paretoColumns(displayRows, buildSkuMonthlyHistory(scoped, months, displayRows.map(r => r.sku_group)));
   strip.innerHTML = `<div class="pivot-block" style="min-width:100%;">${renderSkuTable(displayRows, columns, paretoSort, 'pareto', (r) => {
     const originalIdx = allRows.indexOf(r);
     return originalIdx === crossIdx ? 'pareto-line' : '';
@@ -2304,6 +3624,87 @@ function renderParetoTab(salesBySku, f){
   root.appendChild(section);
 
   attachSkuTableSortHandlers(strip, 'pareto', paretoSort, (newSort) => { paretoSort = newSort; render(); });
+  addDownloadButton(section, `pareto_${rankLabel.replace(/\s+/g,'_')}_${paretoDateStart}_to_${paretoDateEnd}.csv`, displayRows, columns);
+
+  root.appendChild(renderCategorySummarySection(allRows, paretoDateStart, paretoDateEnd, months));
+}
+
+// Category-level rollup of the same new metrics (ROS, Lifetime Inwards,
+// Latest Inward), aggregated up from the already-filtered SKU rows above --
+// so it automatically respects every active filter (Channel/L1/Meta/Category
+// from the top filter rail) plus the Pareto date range.
+let categorySummarySort = {key:'gross_sales', dir:'desc'};
+function computeCategorySummary(skuRows, rangeStart, rangeEnd){
+  const byCat = {};
+  skuRows.forEach(r => {
+    const key = (r.l1||'(none)') + ' | ' + (r.cat||'(none)');
+    const c = byCat[key] || (byCat[key] = {
+      l1: r.l1, cat: r.cat, gross_sales:0, qty:0, return_value:0, net_value:0,
+      lifetime_inward_qty:0, sku_count:0, skus_needing_restock:0, latest_inward_dates: []
+    });
+    c.gross_sales += r.gross_sales;
+    c.qty += r.qty;
+    c.return_value += r.return_value;
+    c.net_value += r.net_value;
+    c.lifetime_inward_qty += r.lifetime_inward_qty;
+    c.sku_count += 1;
+    if (!r.latest_inward_qty || r.latest_inward_qty < 50) c.skus_needing_restock += 1;
+    if (r.latest_inward_date) c.latest_inward_dates.push(r.latest_inward_date);
+  });
+  return Object.values(byCat).map(c => {
+    c.ros = computeROSForGroup(c.qty, c.l1, c.cat, rangeStart, rangeEnd, skuRows);
+    c.most_recent_inward = c.latest_inward_dates.length ? c.latest_inward_dates.sort().slice(-1)[0] : null;
+    delete c.latest_inward_dates;
+    return c;
+  });
+}
+// Category-level ROS: same live-start logic as SKU-level, but the category's
+// "live start" is the EARLIEST live-start among its own SKUs (a category is
+// live as soon as any one of its SKUs is), so it doesn't get penalized by
+// mixing brand-new and long-running SKUs together.
+function computeROSForGroup(qtyInRange, l1, cat, rangeStart, rangeEnd, skuRowsInGroup){
+  const liveStartMonthMap = buildLiveStartMonthMap();
+  let earliestMonth = null;
+  skuRowsInGroup.forEach(r => {
+    if (r.l1 !== l1 || r.cat !== cat) return;
+    const m = liveStartMonthMap[r.sku_group];
+    if (m && (!earliestMonth || m < earliestMonth)) earliestMonth = m;
+  });
+  if (!earliestMonth) return null;
+  const liveStartDate = monthToFirstDate(earliestMonth);
+  if (liveStartDate > rangeEnd) return null;
+  const effectiveStart = liveStartDate > rangeStart ? liveStartDate : rangeStart;
+  const days = Math.max(1, (new Date(rangeEnd) - new Date(effectiveStart)) / 86400000 + 1);
+  return qtyInRange / days;
+}
+
+function renderCategorySummarySection(allRows, rangeStart, rangeEnd, months){
+  const catRows = computeCategorySummary(allRows, rangeStart, rangeEnd);
+  const sorted = sortRowsForDisplay(catRows, categorySummarySort);
+  const columns = [
+    {key:'l1', label:'L1', align:'left'},
+    {key:'cat', label:'Category', align:'left'},
+    {key:'sku_count', label:'SKU Count'},
+    {key:'gross_sales', label:'Gross Sales', render:r => fmtMoney(r.gross_sales)},
+    {key:'qty', label:'Qty', render:r => Math.round(r.qty).toLocaleString()},
+    {key:'ros', label:'ROS (units/day)', render:r => r.ros===null ? '—' : r.ros.toFixed(2)},
+    {key:'return_value', label:'Returns (Est.)', render:r => fmtMoney(r.return_value)},
+    {key:'net_value', label:'Net', render:r => fmtMoney(r.net_value)},
+    {key:'lifetime_inward_qty', label:'Lifetime Inwards', render:r => Math.round(r.lifetime_inward_qty).toLocaleString()},
+    {key:'most_recent_inward', label:'Most Recent Inward', render:r => r.most_recent_inward || '—'},
+    {key:'skus_needing_restock', label:'SKUs Needing Restock', render:r => r.skus_needing_restock},
+  ];
+  const section = document.createElement('div');
+  section.className = 'card-section';
+  section.innerHTML = `<h2>Category Summary <span class="rule"></span><span class="count">${sorted.length} categories</span></h2>
+    <div class="empty-note">Rolled up from the SKU-level table above -- respects all active filters (top filter rail) and this tab's date range. "SKUs Needing Restock" = SKUs with no qualifying (\u226550 unit) inward event on record, or none at all.</div>`;
+  const strip = document.createElement('div');
+  strip.className = 'pivot-strip';
+  strip.innerHTML = `<div class="pivot-block" style="min-width:100%;">${renderSkuTable(sorted, columns, categorySummarySort, 'catsummary')}</div>`;
+  section.appendChild(strip);
+  attachSkuTableSortHandlers(strip, 'catsummary', categorySummarySort, (newSort) => { categorySummarySort = newSort; render(); });
+  addDownloadButton(section, `category_summary_${rangeStart}_to_${rangeEnd}.csv`, sorted, columns);
+  return section;
 }
 
 function renderQuartileTab(salesBySku, f){
@@ -2313,17 +3714,33 @@ function renderQuartileTab(salesBySku, f){
 
   const controls = document.createElement('div');
   controls.className = 'pareto-controls';
-  controls.innerHTML = metricSelectHtml('quartile') + dateRangeHtml('quartile', quartileDateStart, quartileDateEnd) + sliderHtml('quartile', quartileCountPctLimit);
+  controls.innerHTML = metricSelectHtml('quartile') + dateRangeHtml('quartile', quartileDateStart, quartileDateEnd) + sliderHtml('quartile', quartileCountPctLimit) + gmRangeHtml('quartile', quartileGmMin, quartileGmMax) + ageingBucketFilterHtml('quartile', quartileAgeingBuckets) + skuSearchHtml('quartile', quartileSkuSearch);
   root.appendChild(controls);
   controls.querySelector('#quartile-metric').addEventListener('change', e => { paretoMetric = e.target.value; render(); });
   attachDateRangeHandlers(controls, 'quartile', () => quartileDateStart, () => quartileDateEnd, (s,e) => { quartileDateStart = s; quartileDateEnd = e; render(); });
+  attachGmRangeHandlers(controls, 'quartile', (min,max) => { quartileGmMin = min; quartileGmMax = max; render(); });
+  attachAgeingBucketFilterHandlers(controls, 'quartile', (selected) => { quartileAgeingBuckets = selected; render(); });
+  attachSkuSearchHandler(controls, 'quartile', (val) => { quartileSkuSearch = val; render(); });
   const slider = controls.querySelector('#quartile-slider');
   slider.addEventListener('input', e => { controls.querySelector('#quartile-slider-val').textContent = e.target.value; });
   slider.addEventListener('change', e => { quartileCountPctLimit = parseInt(e.target.value,10); render(); });
 
   const months = monthsInRange(quartileDateStart, quartileDateEnd);
   const scoped = salesBySku.filter(r => months.includes(r.month));
-  const { rows: allRows, grossTotal } = computeParetoRows(scoped, paretoMetric, months);
+  let { rows: allRows, grossTotal } = computeParetoRows(scoped, paretoMetric, months, quartileDateStart, quartileDateEnd);
+  allRows = allRows.filter(r => r.gm_pct===null || (r.gm_pct >= quartileGmMin && r.gm_pct <= quartileGmMax));
+  if (quartileAgeingBuckets.length){
+    allRows = allRows.filter(r => quartileAgeingBuckets.includes(r.ageing_bucket));
+  }
+  if (quartileSkuSearch.trim()){
+    const q = quartileSkuSearch.trim().toUpperCase();
+    allRows = allRows.filter(r => (r.sku_group||'').toUpperCase().includes(q));
+  }
+  // Q1-Q4 boundaries are recomputed on THIS filtered set -- so the date range,
+  // GM% range, and ageing bucket filters all genuinely change what counts as
+  // "top 25%" etc, not just which rows happen to be visible from a quartile
+  // assignment computed on the full unfiltered universe.
+  recomputeQuartilesForFilteredRows(allRows);
   const rankLabel = PARETO_METRICS.find(m => m.id === paretoMetric).label;
 
   if (allRows.length === 0){
@@ -2359,22 +3776,1139 @@ function renderQuartileTab(salesBySku, f){
   const section = document.createElement('div');
   section.className = 'card-section';
   section.innerHTML = `<h2>Quartile \u2014 sku_group split by cumulative ${rankLabel} contribution <span class="rule"></span><span class="count">${displayRows.length} of ${allRows.length} shown</span></h2>
-    <div class="empty-note">Range resolves to full months (${months.join(', ')}) -- data is monthly grain, not daily. SKU Count % denominator = all ${allRows.length} distinct SKU groups with sales in this range. Returns/Net are estimated (return qty \u00d7 that SKU's average ASP this period), not a directly sourced Rupee figure.</div>`;
+    <div class="empty-note">Range resolves to full months (${months.join(', ')}) -- data is monthly grain, not daily. SKU Count % denominator = all ${allRows.length} distinct SKU groups with sales in this range. Returns/Net are estimated (return qty \u00d7 that SKU's average ASP this period), not a directly sourced Rupee figure. ROS = qty sold in range ÷ days the SKU was actually live within that range (using its earliest known sales month as 'live start', not just the raw range length). Lifetime Inwards / Latest Inward are from real warehouse putaway events (not planning-stage Pipeline) — Latest Inward only counts events ≥ 50 units as a real restock, smaller ones are treated as incomplete. Current Inv = online (Warehouse) + offline (Store) qty from the latest available month, and Ageing is the latest snapshot (both are current-state, not tied to the date range above). SKU-level DOI and per-store presence breakdowns still pending. GM% below 55% (Ideal minimum) is highlighted red.</div>`;
   const strip = document.createElement('div');
   strip.className = 'pivot-strip';
-  const baseColumns = paretoColumns();
+  const baseColumns = paretoColumns(displayRows, buildSkuMonthlyHistory(scoped, months, displayRows.map(r => r.sku_group)));
   const columns = [
-    ...baseColumns.slice(0, 6), // SKU Group..M3
+    ...baseColumns.slice(0, 7), // Image, SKU Group..M3
     {key:'quartile', label:'Quartile', render:r => `<span class="qtag q${r.quartile}">Q${r.quartile}</span>`},
-    ...baseColumns.slice(6), // Gross Sales..Image
+    ...baseColumns.slice(7), // Gross Sales..Latest Inward Qty
   ];
   strip.innerHTML = `<div class="pivot-block" style="min-width:100%;">${renderSkuTable(displayRows, columns, quartileSort, 'quartile')}</div>`;
   section.appendChild(strip);
   root.appendChild(section);
 
   attachSkuTableSortHandlers(strip, 'quartile', quartileSort, (newSort) => { quartileSort = newSort; render(); });
+  addDownloadButton(section, `quartile_${rankLabel.replace(/\s+/g,'_')}_${quartileDateStart}_to_${quartileDateEnd}.csv`, displayRows, columns);
+}
+
+// ===========================================================================
+// AGEING TAB -- MoM ageing-bucket trend (Jan 2025 -> latest), from
+// DATA.ageing_monthly_by_bucket (already aggregated server-side to month x
+// bucket grain, see AGEING_MONTHLY_BY_BUCKET_QUERY in build_data.py).
+// ===========================================================================
+const AGEING_BUCKET_ORDER = ['0-30','30-60','60-90','90-120','120-180','180-270','270-360','360+'];
+
+function ageingBucketSortIndex(bucket){
+  const idx = AGEING_BUCKET_ORDER.indexOf(bucket);
+  return idx === -1 ? AGEING_BUCKET_ORDER.length : idx; // unrecognized labels sort last, not lost
+}
+
+function renderAgeingTab(f){
+  const root = document.getElementById('ageing-root');
+  root.innerHTML = '';
+
+  const rawData = DATA.ageing_monthly_by_bucket || [];
+  if (rawData.length === 0){
+    root.innerHTML = `<div class="empty-note">No ageing data available yet.</div>`;
+    return;
+  }
+
+  // Cross-filterable by L1/Category/Meta1-3, same as Pareto/Quartile/Analytics
+  // (via the shared leafMatches() helper) -- the underlying query now carries
+  // those dimensions per row instead of being pre-aggregated away.
+  // NOTE: NOT filterable by Channel -- daily_fifo_ageing (the source table)
+  // has no channel/warehouse-split column, so there's no channel dimension to
+  // filter on here. Flagged in the note below rather than silently ignored.
+  const filtered = rawData.filter(r => leafMatches(r, f));
+  if (filtered.length === 0){
+    root.innerHTML = `<div class="empty-note">No ageing data matches the current L1/Category/Meta filter.</div>`;
+    return;
+  }
+
+  // Re-aggregate to (month, bucket) grain for display -- avg_inv sums across
+  // whatever leaf combos matched the filter; closing_sku_count sums the
+  // per-leaf distinct-SKU counts (an approximation when a filter is active,
+  // since a SKU can't literally split across leaves -- but each SKU only
+  // belongs to one L1/Category/Meta combo, so this is exact, not additive
+  // double-counting).
+  const data = [];
+  const aggMap = {};
+  filtered.forEach(r => {
+    const key = r.month + '||' + r.ageing_bucket;
+    const cell = aggMap[key] || (aggMap[key] = { month: r.month, ageing_bucket: r.ageing_bucket, avg_inv: 0, closing_sku_count: 0 });
+    cell.avg_inv += (r.avg_inv || 0);
+    cell.closing_sku_count += (r.closing_sku_count || 0);
+  });
+  Object.values(aggMap).forEach(c => data.push(c));
+
+  const months = [...new Set(data.map(r => r.month))].sort();
+  const bucketsPresent = [...new Set(data.map(r => r.ageing_bucket))]
+    .sort((a,b) => ageingBucketSortIndex(a) - ageingBucketSortIndex(b));
+
+  const cellMap = {}; // "bucket||month" -> {avg_inv, closing_sku_count}
+  data.forEach(r => { cellMap[r.ageing_bucket + '||' + r.month] = r; });
+
+  const note = document.createElement('div');
+  note.className = 'empty-note';
+  note.textContent = 'Avg Inv = true average-per-day total inventory in that bucket, averaged across every day in the month (not just month-end). Closing SKU Count still uses each SKU\'s last available snapshot within the month, since that\'s a headcount at month-end, not a daily rate. Filterable by L1/Category/Meta (top filter bar) -- NOT filterable by Channel, since the source ageing table has no channel/warehouse split. Sales Mix/GM%/STR% below ARE Channel-filterable (sales data has channel; the Inv side of STR% is not, so switching Channel changes the sales numerator but not the inventory denominator -- flagged in that section directly).';
+  root.appendChild(note);
+
+  root.appendChild(buildSalesMixGmStrSection());
+
+  function buildSalesMixGmStrSection(){
+    // Sales Mix% / GM% / STR% per month -- computed from sales_by_sku,
+    // filtered by the SAME L1/Category/Meta filter as the Inv tables above,
+    // PLUS Channel (sales_by_sku has a channel column; daily_fifo_ageing does
+    // not, so Channel changes the sales side here but NOT the Inv side of
+    // STR% below -- called out explicitly rather than silently mixing a
+    // channel-filtered numerator with an unfiltered denominator).
+    const salesRows = (DATA.sales_by_sku || []).filter(r => months.includes(r.month) && leafMatches(r, f) && (f.channel === 'ALL' || r.channel === f.channel));
+    const byMonth = {};
+    months.forEach(m => { byMonth[m] = {gross:0, qty:0, cogs:0}; });
+    salesRows.forEach(r => {
+      const cell = byMonth[r.month];
+      if (!cell) return;
+      cell.gross += (r.gross_sales_value ?? r.gross_sales ?? 0);
+      cell.qty += (r.qty || 0);
+      cell.cogs += (r.cogs_sold || 0);
+    });
+    const grandTotalGross = Object.values(byMonth).reduce((s,c) => s + c.gross, 0);
+
+    // Total avg_inv per month, from the SAME (L1/Cat/Meta-filtered, NOT
+    // channel-filtered) `data` used by the Inv tables above -- this is the
+    // STR% denominator, and it does not change when Channel is switched.
+    const totalInvByMonth = {};
+    months.forEach(m => {
+      totalInvByMonth[m] = bucketsPresent.reduce((s,b) => { const c = cellMap[b+'||'+m]; return s + (c ? c.avg_inv : 0); }, 0);
+    });
+
+    const metrics = [
+      { key: 'mix', label: 'Sales Mix %', fmt: v => v===null ? '\u2014' : v.toFixed(1)+'%', good: 'high' },
+      { key: 'gm', label: 'GM %', fmt: v => v===null ? '\u2014' : v.toFixed(1)+'%', good: 'high' },
+      { key: 'str', label: 'STR %', fmt: v => v===null ? '\u2014' : v.toFixed(1)+'%', good: 'high' },
+    ];
+    const valuesByMetric = {};
+    metrics.forEach(m => { valuesByMetric[m.key] = {}; });
+    months.forEach(m => {
+      const cell = byMonth[m];
+      valuesByMetric.mix[m] = grandTotalGross > 0 ? (cell.gross / grandTotalGross * 100) : null;
+      valuesByMetric.gm[m] = cell.gross > 0 ? ((cell.gross - cell.cogs) / cell.gross * 100) : null;
+      const invForMonth = totalInvByMonth[m] || 0;
+      const denom = cell.qty + invForMonth;
+      valuesByMetric.str[m] = denom > 0 ? (cell.qty / denom * 100) : null;
+    });
+
+    const section = document.createElement('div');
+    section.className = 'card-section';
+    section.innerHTML = `<h2>Sales Mix / GM% / STR% by Month <span class="rule"></span><span class="count">${months.length} months</span></h2>`;
+    const subnote = document.createElement('div');
+    subnote.className = 'empty-note';
+    subnote.textContent = f.channel !== 'ALL'
+      ? `Channel filter active (${f.channel}): Sales Mix% and GM% reflect ${f.channel} sales only. STR%'s inventory denominator is NOT channel-split (source ageing table has no channel column) -- so STR% here mixes a ${f.channel}-only numerator against a total-inventory denominator. Treat this STR% as directional only while a Channel filter is active.`
+      : 'Sales Mix% = that month\'s Gross Sales as a % of the total across all shown months. STR% = Qty Sold / (Qty Sold + Avg Inv/Day) for that month, same formula as the Analytics tab\'s STR metric.';
+    section.appendChild(subnote);
+
+    const strip = document.createElement('div');
+    strip.className = 'pivot-strip';
+    strip.innerHTML = `<div class="pivot-block" style="min-width:100%;">
+      <table class="ptable">
+        <thead><tr><th style="text-align:left;">Metric</th>${months.map(m => `<th>${m}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${metrics.map(metric => {
+            const vals = months.map(m => valuesByMetric[metric.key][m]);
+            const present = vals.filter(v => v !== null);
+            const max = present.length ? Math.max(...present) : 1;
+            const min = present.length ? Math.min(...present) : 0;
+            return `<tr>
+              <td class="rowlabel">${metric.label}</td>
+              ${months.map((m,i) => {
+                const v = vals[i];
+                if (v === null) return `<td>\u2014</td>`;
+                const t = max > min ? (v - min) / (max - min) : 1;
+                const r = Math.round(193 - t*82), g = Math.round(89 + t*74), b = Math.round(74 + t*57); // red(low)->green(high)
+                return `<td style="background:rgba(${r},${g},${b},0.32);">${metric.fmt(v)}</td>`;
+              }).join('')}
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+    section.appendChild(strip);
+
+    const csvColumns = [
+      {key:'metric', label:'Metric'},
+      ...months.map(m => ({key:m, label:m, render: r => { const v = valuesByMetric[r.metricKey][m]; return v===null ? '' : v.toFixed(1); }}))
+    ];
+    const csvRows = metrics.map(m => ({metric: m.label, metricKey: m.key}));
+    addDownloadButton(section, 'ageing_sales_mix_gm_str.csv', csvRows, csvColumns);
+
+    return section;
+  }
+
+  function buildTable(title, fieldKey, fmt, filenameSlug){
+    const section = document.createElement('div');
+    section.className = 'card-section';
+    section.innerHTML = `<h2>${title} <span class="rule"></span><span class="count">${bucketsPresent.length} buckets \u00d7 ${months.length} months</span></h2>`;
+    const strip = document.createElement('div');
+    strip.className = 'pivot-strip';
+
+    // Color scale: Green (low) -> Red (high), relative to this table's own
+    // max value -- flags where inventory/SKU-count is concentrated at a glance.
+    const maxVal = Math.max(1, ...data.map(r => r[fieldKey] || 0));
+    const cellBg = (v) => {
+      if (v === undefined || v === null) return '';
+      const t = Math.min(v / maxVal, 1);
+      const r = Math.round(111 + t * (193 - 111));
+      const g = Math.round(163 + t * (89 - 163));
+      const b = Math.round(131 + t * (74 - 131));
+      return `background:rgba(${r},${g},${b},0.32);`;
+    };
+
+    // Total row: sums avg_inv (or closing_sku_count) across ALL buckets for
+    // each month -- gives the same "how has total inventory moved" read this
+    // table's per-bucket breakdown doesn't show on its own.
+    const totalByMonth = {};
+    months.forEach(m => {
+      totalByMonth[m] = bucketsPresent.reduce((s,b) => {
+        const c = cellMap[b + '||' + m];
+        return s + (c && c[fieldKey] ? c[fieldKey] : 0);
+      }, 0);
+    });
+    const totalTrendValues = months.map(m => totalByMonth[m]);
+
+    // Sortable: clicking "Ageing Bucket" sorts rows back to natural age order
+    // (0-30 -> 360+); clicking any month column sorts bucket rows by that
+    // month's value. Total row always stays pinned at the bottom regardless
+    // of sort. Default = natural ageing order (unsorted state).
+    let sortState = {key: '__bucket__', dir: 'asc'};
+    function sortedBuckets(){
+      const arr = bucketsPresent.slice();
+      if (sortState.key === '__bucket__'){
+        arr.sort((a,b) => ageingBucketSortIndex(a) - ageingBucketSortIndex(b));
+      } else {
+        arr.sort((a,b) => {
+          const av = (cellMap[a+'||'+sortState.key] || {})[fieldKey] ?? -Infinity;
+          const bv = (cellMap[b+'||'+sortState.key] || {})[fieldKey] ?? -Infinity;
+          return av - bv;
+        });
+      }
+      if (sortState.dir === 'desc') arr.reverse();
+      return arr;
+    }
+
+    function draw(){
+      const orderedBuckets = sortedBuckets();
+      const arrowFor = (key) => sortState.key === key ? (sortState.dir === 'asc' ? ' \u25b2' : ' \u25bc') : '';
+      strip.innerHTML = `
+        <div class="pivot-block" style="min-width:100%;">
+          <table class="ptable">
+            <thead><tr>
+              <th style="text-align:left; cursor:pointer;" data-sortkey="__bucket__">Ageing Bucket${arrowFor('__bucket__')}</th>
+              ${months.map(m => `<th style="cursor:pointer;" data-sortkey="${m}">${m}${arrowFor(m)}</th>`).join('')}
+              <th>Trend</th>
+            </tr></thead>
+            <tbody>
+              ${orderedBuckets.map(b => {
+                const trendValues = months.map(m => { const c = cellMap[b+'||'+m]; return c ? c[fieldKey] : null; });
+                return `<tr>
+                <td class="rowlabel">${b}</td>
+                ${months.map(m => {
+                  const cell = cellMap[b + '||' + m];
+                  const v = cell ? cell[fieldKey] : null;
+                  return `<td style="${cellBg(v)}">${cell ? fmt(v) : '\u2014'}</td>`;
+                }).join('')}
+                <td>${sparklineSvg(trendValues, {})}</td>
+              </tr>`;}).join('')}
+              <tr class="total-row">
+                <td class="rowlabel total-label">Total</td>
+                ${months.map(m => `<td style="${cellBg(totalByMonth[m])}">${fmt(totalByMonth[m])}</td>`).join('')}
+                <td>${sparklineSvg(totalTrendValues, {})}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>`;
+      strip.querySelectorAll('th[data-sortkey]').forEach(th => {
+        th.addEventListener('click', () => {
+          const key = th.dataset.sortkey;
+          sortState = (sortState.key === key)
+            ? {key, dir: sortState.dir === 'asc' ? 'desc' : 'asc'}
+            : {key, dir: 'desc'};
+          draw();
+        });
+      });
+    }
+    draw();
+    section.appendChild(strip);
+
+    const csvColumns = [
+      {key:'bucket', label:'Ageing Bucket'},
+      ...months.map(m => ({key:m, label:m, render: r => { const c = cellMap[r.bucket+'||'+m]; return c ? fmt(c[fieldKey]) : ''; }}))
+    ];
+    const csvRows = [...bucketsPresent.map(b => ({bucket: b})), {bucket:'Total'}];
+    addDownloadButton(section, `ageing_${filenameSlug}.csv`, csvRows, csvColumns);
+
+    return section;
+  }
+
+  root.appendChild(buildTable('MoM Avg Inv/Day by Ageing Bucket', 'avg_inv', v => fmtNum(v), 'avg_inv_by_bucket'));
+  root.appendChild(buildTable('MoM Closing Unique SKU Count by Ageing Bucket', 'closing_sku_count', v => v.toLocaleString(), 'closing_sku_count_by_bucket'));
+
+  // Sales Mix% / GM% / STR%, broken out BY ageing bucket, MoM -- 3 cards, per
+  // Aditya's ask ("in Ageing breakup i.e. for 0-30 and 30-60 MoM"). Built from
+  // ageing_bucket_sales (each SKU's sales attributed to its own closing
+  // ageing-bucket for that month), cross-filterable by L1/Category/Meta same
+  // as the tables above. STR%'s inv denominator comes from the same cellMap
+  // used above (avg_inv per bucket/month) -- NOT channel-filterable, same
+  // limitation as the rest of this tab.
+  const bucketSalesRaw = (DATA.ageing_bucket_sales || []).filter(r => leafMatches(r, f));
+  const bucketSalesAgg = {}; // "bucket||month" -> {gross,qty,cogs}
+  bucketSalesRaw.forEach(r => {
+    const key = r.ageing_bucket + '||' + r.month;
+    const cell = bucketSalesAgg[key] || (bucketSalesAgg[key] = {gross:0, qty:0, cogs:0});
+    cell.gross += (r.gross_sales || 0);
+    cell.qty += (r.qty || 0);
+    cell.cogs += (r.cogs_sold || 0);
+  });
+  const grossByMonthAllBuckets = {};
+  months.forEach(m => {
+    grossByMonthAllBuckets[m] = bucketsPresent.reduce((s,b) => { const c = bucketSalesAgg[b+'||'+m]; return s + (c ? c.gross : 0); }, 0);
+  });
+  function buildBucketMetricTable(title, filenameSlug, computeFn){
+    const section = document.createElement('div');
+    section.className = 'card-section';
+    section.innerHTML = `<h2>${title} <span class="rule"></span><span class="count">${bucketsPresent.length} buckets \u00d7 ${months.length} months</span></h2>`;
+    const values = {}; // "bucket||month" -> number|null
+    bucketsPresent.forEach(b => months.forEach(m => { values[b+'||'+m] = computeFn(b, m); }));
+    const strip = document.createElement('div');
+    strip.className = 'pivot-strip';
+    strip.innerHTML = `<div class="pivot-block" style="min-width:100%;">
+      <table class="ptable">
+        <thead><tr><th style="text-align:left;">Ageing Bucket</th>${months.map(m => `<th>${m}</th>`).join('')}<th>Trend</th></tr></thead>
+        <tbody>
+          ${bucketsPresent.map(b => {
+            const rowVals = months.map(m => values[b+'||'+m]);
+            const present = rowVals.filter(v => v !== null);
+            const max = present.length ? Math.max(...present) : 1, min = present.length ? Math.min(...present) : 0;
+            return `<tr>
+              <td class="rowlabel">${b}</td>
+              ${months.map((m,i) => {
+                const v = rowVals[i];
+                if (v === null) return `<td>\u2014</td>`;
+                const t = max > min ? (v-min)/(max-min) : 1;
+                const r = Math.round(193 - t*82), g = Math.round(89 + t*74), bl = Math.round(74 + t*57);
+                return `<td style="background:rgba(${r},${g},${bl},0.32);">${v.toFixed(1)}%</td>`;
+              }).join('')}
+              <td>${sparklineSvg(rowVals, {})}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+    section.appendChild(strip);
+    const csvColumns = [{key:'bucket', label:'Ageing Bucket'}, ...months.map(m => ({key:m, label:m, render:r => { const v = values[r.bucket+'||'+m]; return v===null?'':v.toFixed(1); }}))];
+    addDownloadButton(section, filenameSlug, bucketsPresent.map(b=>({bucket:b})), csvColumns);
+    return section;
+  }
+  root.appendChild(buildBucketMetricTable('Sales Mix% by Ageing Bucket (MoM)', 'ageing_sales_mix_by_bucket.csv', (b,m) => {
+    const c = bucketSalesAgg[b+'||'+m];
+    const totalForMonth = grossByMonthAllBuckets[m];
+    if (!c || totalForMonth <= 0) return null;
+    return (c.gross / totalForMonth) * 100;
+  }));
+  root.appendChild(buildBucketMetricTable('GM% by Ageing Bucket (MoM)', 'ageing_gm_by_bucket.csv', (b,m) => {
+    const c = bucketSalesAgg[b+'||'+m];
+    if (!c || c.gross <= 0) return null;
+    return ((c.gross - c.cogs) / c.gross) * 100;
+  }));
+  root.appendChild(buildBucketMetricTable('STR% by Ageing Bucket (MoM)', 'ageing_str_by_bucket.csv', (b,m) => {
+    const c = bucketSalesAgg[b+'||'+m];
+    const invCell = cellMap[b+'||'+m];
+    const inv = invCell ? invCell.avg_inv : 0;
+    if (!c) return null;
+    const denom = c.qty + inv;
+    return denom > 0 ? (c.qty / denom) * 100 : null;
+  }));
+
+  root.appendChild(buildInvMixSection());
+
+  // ---- Inventory Mix: % share of total Avg Inv/Day each bucket holds, per
+  // month -- shows how the ageing profile is shifting (e.g. more inventory
+  // sliding into 90-120/120-180 over time = ageing risk building up), not
+  // just each bucket's absolute number in isolation.
+  function buildInvMixSection(){
+    const section = document.createElement('div');
+    section.className = 'card-section';
+
+    // % mix per bucket per month = that bucket's avg_inv / sum of all
+    // buckets' avg_inv for that month.
+    const mix = {}; // "bucket||month" -> pct
+    months.forEach(m => {
+      const total = bucketsPresent.reduce((s,b) => { const c = cellMap[b+'||'+m]; return s + (c ? c.avg_inv : 0); }, 0);
+      bucketsPresent.forEach(b => {
+        const c = cellMap[b+'||'+m];
+        mix[b+'||'+m] = total > 0 ? ((c ? c.avg_inv : 0) / total * 100) : 0;
+      });
+    });
+
+    // Bucket colors: same green->red age gradient used elsewhere, indexed by
+    // position in AGEING_BUCKET_ORDER so it's consistent everywhere in the tab.
+    const bucketColor = (b) => {
+      const idx = ageingBucketSortIndex(b);
+      const maxIdx = Math.max(1, AGEING_BUCKET_ORDER.length - 1);
+      const t = Math.min(Math.max(idx / maxIdx, 0), 1);
+      const r = Math.round(111 + t * (193 - 111));
+      const g = Math.round(163 + t * (89 - 163));
+      const bch = Math.round(131 + t * (74 - 131));
+      return `rgb(${r},${g},${bch})`;
+    };
+
+    // Stacked 100% bar chart, one bar per month.
+    const W = Math.max(600, months.length * 46), H = 220, padTop = 10, padBottom = 30, barW = 30, gap = 16;
+    const bars = months.map((m, i) => {
+      const x = 10 + i * (barW + gap);
+      let yCursor = H - padBottom;
+      const segs = bucketsPresent.map(b => {
+        const pct = mix[b+'||'+m] || 0;
+        const segH = (pct/100) * (H - padTop - padBottom);
+        yCursor -= segH;
+        return `<rect x="${x}" y="${yCursor.toFixed(1)}" width="${barW}" height="${segH.toFixed(1)}" fill="${bucketColor(b)}"><title>${b}: ${pct.toFixed(1)}%</title></rect>`;
+      }).join('');
+      return segs + `<text x="${x+barW/2}" y="${H-10}" text-anchor="middle" font-size="9" fill="var(--muted)">${monthLabelShort(m)}</text>`;
+    }).join('');
+    const legend = bucketsPresent.map(b => `<span style="display:inline-flex; align-items:center; gap:4px; margin-right:12px; font-size:11px; color:var(--muted);"><span style="width:10px; height:10px; background:${bucketColor(b)}; display:inline-block; border-radius:2px;"></span>${b}</span>`).join('');
+
+    section.innerHTML = `<h2>Inv Mix by Ageing Bucket (% share, MoM) <span class="rule"></span><span class="count">${bucketsPresent.length} buckets \u00d7 ${months.length} months</span></h2>
+      <div class="empty-note">Each month's bar = 100% of that month's total Avg Inv/Day, split by ageing bucket. Shows how the ageing profile is shifting over time -- e.g. a growing red/orange share means more inventory sliding into older buckets, not just an absolute-number change.</div>
+      <div style="margin:10px 0;">${legend}</div>
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block; overflow:visible;">${bars}</svg>`;
+
+    // Table + per-bucket trend sparkline of its % share over time.
+    const tableWrap = document.createElement('div');
+    tableWrap.style.marginTop = '18px';
+    tableWrap.innerHTML = `
+      <table class="ptable">
+        <thead><tr>
+          <th style="text-align:left;">Ageing Bucket</th>
+          ${months.map(m => `<th>${m}</th>`).join('')}
+          <th>Mix Trend</th>
+        </tr></thead>
+        <tbody>
+          ${bucketsPresent.map(b => {
+            const trendValues = months.map(m => mix[b+'||'+m]);
+            return `<tr>
+              <td class="rowlabel">${b}</td>
+              ${months.map(m => {
+                const v = mix[b+'||'+m] || 0;
+                const t = Math.min(v/100, 1);
+                const r = Math.round(111 + t * (193 - 111));
+                const g = Math.round(163 + t * (89 - 163));
+                const bch = Math.round(131 + t * (74 - 131));
+                return `<td style="background:rgba(${r},${g},${bch},0.32);">${v.toFixed(1)}%</td>`;
+              }).join('')}
+              <td>${sparklineSvg(trendValues, {})}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>`;
+    section.appendChild(tableWrap);
+
+    const csvColumns = [
+      {key:'bucket', label:'Ageing Bucket'},
+      ...months.map(m => ({key:m, label:m, render: r => (mix[r.bucket+'||'+m]||0).toFixed(1)+'%'}))
+    ];
+    const csvRows = bucketsPresent.map(b => ({bucket: b}));
+    addDownloadButton(section, 'ageing_inv_mix_by_bucket.csv', csvRows, csvColumns);
+
+    return section;
+  }
+
+  root.appendChild(buildAgeingSkuListSection(f));
+}
+
+// SKU-level Ageing list: current ageing bucket/age, plus every other metric
+// we've built across this dashboard, in one downloadable table with images --
+// per Aditya's ask for "all metrics we have discussed ever" at SKU grain.
+function buildAgeingSkuListSection(f){
+  const section = document.createElement('div');
+  section.className = 'card-section';
+
+  const ageingMap = buildAgeingBySkuMap();
+  const storeInvMap = buildStoreInvBySkuMap();
+  const pipelineMap = buildPipelineBySkuMap();
+  const inwardsMap = buildInwardsBySkuMap();
+  const lifetimeSalesMap = {}; (DATA.lifetime_sales_by_sku || []).forEach(r => { lifetimeSalesMap[r.sku_group] = r; });
+  const lifetimeReturnsMap = {}; (DATA.lifetime_returns_by_sku || []).forEach(r => { lifetimeReturnsMap[r.sku_group] = r; });
+  const l30dSalesMap = {}; (DATA.l30d_sales_by_sku || []).forEach(r => { l30dSalesMap[r.sku_group] = r; });
+  const metaMap = repeatEvalSkuMeta();
+
+  // SKU universe = every SKU with an ageing snapshot at all, filtered by the
+  // current L1/Category/Meta filter bar (same leafMatches() convention as
+  // everywhere else). NOT filterable by Channel here either, same reason as
+  // the rest of the Ageing tab (source ageing table has no channel column).
+  const skuGroups = Object.keys(ageingMap).filter(sku => {
+    const meta = metaMap[sku] || {};
+    return leafMatches(meta, f);
+  });
+
+  const rows = skuGroups.map(sku => {
+    const ag = ageingMap[sku] || {};
+    const inv = storeInvMap[sku] || {};
+    const pipe = pipelineMap[sku] || {};
+    const inw = inwardsMap[sku] || {};
+    const life = lifetimeSalesMap[sku] || {};
+    const lifeRet = lifetimeReturnsMap[sku] || {};
+    const l30d = l30dSalesMap[sku] || {};
+    const meta = metaMap[sku] || {};
+
+    const currentInv = (inv.current_online_qty || 0) + (inv.current_offline_qty || 0);
+    const l30dQty = l30d.l30d_qty_sold || 0;
+    const l30dDailyRate = l30dQty / 30;
+    const gmPct = life.lifetime_gross_sales > 0 ? ((life.lifetime_gross_sales - life.lifetime_cogs_sold) / life.lifetime_gross_sales * 100) : null;
+    const returnPct = life.lifetime_qty_sold > 0 ? ((lifeRet.lifetime_return_qty || 0) / life.lifetime_qty_sold * 100) : null;
+
+    return {
+      sku_group: sku, l1: meta.l1, cat: meta.cat, m1: meta.m1, m2: meta.m2, m3: meta.m3,
+      ageing_bucket: ag.ageing_bucket, weighted_age_days: ag.weighted_age_days,
+      current_inv: currentInv, pipeline_pending: pipe.pending_qty || 0,
+      doi: l30dDailyRate > 0 ? ((currentInv + (pipe.pending_qty||0)) / l30dDailyRate) : null,
+      total_sold: life.lifetime_qty_sold || 0, total_inwarded: inw.lifetime_qty || 0,
+      total_returns: lifeRet.lifetime_return_qty || 0, gm_pct: gmPct, return_pct: returnPct,
+      l30d_qty_sold: l30dQty,
+    };
+  });
+
+  section.innerHTML = `<h2>SKU-Level Ageing List <span class="rule"></span><span class="count">${rows.length} SKU groups</span></h2>`;
+  const noteDiv = document.createElement('div');
+  noteDiv.className = 'empty-note';
+  noteDiv.textContent = 'Every SKU with a current ageing snapshot, filtered by L1/Category/Meta (top bar). Ageing = current bucket/weighted age (same convention as everywhere else in this tab). DOI = (Current Inv + Pipeline) / L30D daily rate. GM%/Return% are lifetime figures.';
+  section.appendChild(noteDiv);
+
+  const ageingMax = Math.max(1, ...rows.map(r => r.weighted_age_days || 0));
+  const ageingBg = (days) => {
+    if (days === null || days === undefined) return '';
+    const t = Math.min(days / ageingMax, 1);
+    const r = Math.round(111 + t * (193 - 111)), g = Math.round(163 + t * (89 - 163)), b = Math.round(131 + t * (74 - 131));
+    return `background:rgba(${r},${g},${b},0.32);`;
+  };
+
+  const columns = [
+    {key:'image', label:'Image', sortable:false, render:r => skuThumb(r.sku_group), frozen:true, frozenLeft:0},
+    {key:'sku_group', label:'SKU Group', align:'left', frozen:true, frozenLeft:100},
+    {key:'l1', label:'L1', align:'left'},
+    {key:'cat', label:'Cat', align:'left'},
+    {key:'ageing_bucket', label:'Ageing', render:r => r.ageing_bucket ? `<span style="${ageingBg(r.weighted_age_days)} padding:2px 6px; border-radius:4px; display:inline-block;">${r.ageing_bucket}${r.weighted_age_days!==null&&r.weighted_age_days!==undefined ? ' ('+r.weighted_age_days.toFixed(0)+'d)' : ''}</span>` : '\u2014'},
+    {key:'current_inv', label:'Current Inv', render:r => Math.round(r.current_inv).toLocaleString()},
+    {key:'pipeline_pending', label:'Pipeline', render:r => Math.round(r.pipeline_pending).toLocaleString()},
+    {key:'doi', label:'DOI ((Inv+Pipeline)/L30D rate)', render:r => r.doi===null ? '\u2014' : r.doi.toFixed(0)+'d'},
+    {key:'total_sold', label:'Total Sold (lifetime)', render:r => Math.round(r.total_sold).toLocaleString()},
+    {key:'total_inwarded', label:'Total Inwarded (lifetime)', render:r => Math.round(r.total_inwarded).toLocaleString()},
+    {key:'total_returns', label:'Total Returns (lifetime)', render:r => Math.round(r.total_returns).toLocaleString()},
+    {key:'gm_pct', label:'GM%', render:r => {
+      if (r.gm_pct===null) return '\u2014';
+      const below = r.gm_pct < IDEAL_GM_PCT;
+      return `<span style="${below ? 'background:rgba(193,89,74,0.25); color:var(--red); padding:2px 6px; border-radius:4px; display:inline-block;' : ''}">${r.gm_pct.toFixed(1)}%</span>`;
+    }},
+    {key:'return_pct', label:'Return%', render:r => r.return_pct===null ? '\u2014' : r.return_pct.toFixed(1)+'%'},
+    {key:'l30d_qty_sold', label:'L30D Qty Sold', render:r => Math.round(r.l30d_qty_sold).toLocaleString()},
+  ];
+
+  const strip = document.createElement('div');
+  strip.className = 'pivot-strip';
+  function drawTable(sortState){
+    const displayRows = sortRowsForDisplay(rows, sortState);
+    strip.innerHTML = `<div class="pivot-block" style="min-width:100%;">${renderSkuTable(displayRows, columns, sortState, 'ageingskulist')}</div>`;
+    attachSkuTableSortHandlers(strip, 'ageingskulist', sortState, (newSort) => drawTable(newSort));
+    return displayRows;
+  }
+  const displayRows = drawTable({key:'weighted_age_days', dir:'desc'});
+  section.appendChild(strip);
+  addDownloadButton(section, 'ageing_sku_list.csv', displayRows, columns);
+
+  return section;
+}
+
+// ===========================================================================
+// REPEAT EVALUATION TAB -- classifies each SKU's real (>=50 unit) inward
+// events into Reorder / Repeat based on whether they land in the same
+// business "season" (H1: Jan-Jun, H2: Jul-Dec of a given year) or different
+// seasons. Confirmed business rules (do not relitigate without checking with
+// Aditya first):
+//   - Reorder: 2+ qualifying inwards land in the SAME season, at least 60
+//     days apart. Purely calendar-half based -- the season boundary is what
+//     matters, not a rolling "how far apart" check across the boundary.
+//   - Repeat: qualifying inwards land in DIFFERENT seasons (any two, however
+//     close calendar-wise -- e.g. Dec + Feb still counts as different
+//     seasons even though it's only ~2 months apart).
+//   - If a SKU has been inwarded in 3+ distinct seasons across its life
+//     (even if some of those inwards were same-season pairs), it's still
+//     classified Repeat overall -- "Repeat" wins over "Reorder" whenever ANY
+//     two qualifying events land in different seasons.
+//   - Only SKUs with 2+ qualifying (>=50 unit) inward events appear in this
+//     tab at all -- one-time SKUs are excluded per Aditya's explicit call.
+// ===========================================================================
+function seasonKeyForDate(iso){
+  const [y, m] = iso.split('-').map(Number);
+  return `${y}-H${m <= 6 ? 1 : 2}`;
+}
+function daysBetween(isoA, isoB){
+  return Math.abs((new Date(isoB) - new Date(isoA)) / 86400000);
+}
+
+// Builds { sku_group: { events:[...sorted], seasonCount, type, reinwardCount,
+// avgQtyPerInward } } from DATA.inward_events_by_sku. Only SKUs with 2+
+// qualifying events are included in the returned map at all.
+function buildRepeatClassificationMap(){
+  const bySku = {};
+  (DATA.inward_events_by_sku || []).forEach(e => {
+    if (!e.sku_group || !e.inward_date) return;
+    (bySku[e.sku_group] || (bySku[e.sku_group] = [])).push(e);
+  });
+  const out = {};
+  Object.keys(bySku).forEach(sku => {
+    const events = bySku[sku].slice().sort((a,b) => a.inward_date.localeCompare(b.inward_date));
+    if (events.length < 2) return; // one-time inward -- excluded from this tab per spec
+
+    const seasons = [...new Set(events.map(e => seasonKeyForDate(e.inward_date)))];
+    let type;
+    if (seasons.length > 1){
+      type = 'Repeat'; // spans 2+ distinct seasons -- wins regardless of any same-season pairs too
+    } else {
+      // Single season: qualifies as Reorder only if the span from first to
+      // last qualifying event is at least 60 days -- otherwise these are
+      // likely near-duplicate putaway entries for the same restock, not a
+      // genuine separate reorder decision. Flagged distinctly rather than
+      // silently forced into either bucket.
+      const span = daysBetween(events[0].inward_date, events[events.length-1].inward_date);
+      type = span >= 60 ? 'Reorder' : 'Reorder (< 60d apart -- check)';
+    }
+    const totalQty = events.reduce((s,e) => s + (e.qty||0), 0);
+    out[sku] = {
+      events, seasonCount: seasons.length, type,
+      reinwardCount: events.length,
+      avgQtyPerInward: totalQty / events.length,
+    };
+  });
+  return out;
+}
+
+// QoQ (calendar quarter) qty sold + GM% per SKU, from sales_by_sku's monthly
+// grain (rolling ~13-month window -- so this covers the last 4-5 calendar
+// quarters, not the SKU's full lifetime; flagged in the tab's note).
+// Fixed quarter list, Q1 2025 -> the latest quarter present in the data
+// (not tied to any rolling window) -- per Aditya's explicit ask that Repeat
+// Evaluation always starts from Q1 2025 regardless of how the main dashboard's
+// rolling window is set elsewhere.
+function fixedQuarterListSince2025(){
+  const quarters = [];
+  const latest = latestDataDate();
+  const latestY = new Date(latest).getFullYear();
+  const latestQ = Math.ceil((new Date(latest).getMonth()+1)/3);
+  for (let y = 2025; y <= latestY; y++){
+    const qMax = (y === latestY) ? latestQ : 4;
+    for (let q = 1; q <= qMax; q++){
+      quarters.push(`${y}-Q${q}`);
+    }
+  }
+  return quarters;
+}
+
+function buildSkuQuarterlyHistory(){
+  const bySku = {}; // sku -> {quarterKey -> {gross,qty,cogs}}
+  (DATA.sales_by_sku_quarterly || []).forEach(r => {
+    if (!r.sku_group || !r.quarter) return;
+    const sku = bySku[r.sku_group] || (bySku[r.sku_group] = {});
+    sku[r.quarter] = { gross: r.gross_sales || 0, qty: r.qty || 0, cogs: r.cogs_sold || 0 };
+  });
+  return bySku;
+}
+
+function repeatEvalSkuMeta(){
+  // l1/cat/m1/m2/m3 aren't on the lifetime queries (grouped to SKU only) --
+  // pull them from sales_by_sku's monthly rows instead, most-recent-seen wins.
+  const meta = {};
+  (DATA.sales_by_sku || []).forEach(r => {
+    if (!r.sku_group) return;
+    meta[r.sku_group] = { l1: r.l1, cat: r.cat, m1: r.m1, m2: r.m2, m3: r.m3 };
+  });
+  return meta;
+}
+
+function renderRepeatEvalTab(){
+  const root = document.getElementById('repeateval-root');
+  root.innerHTML = '';
+
+  const classMap = buildRepeatClassificationMap();
+  const skuGroups = Object.keys(classMap);
+  if (skuGroups.length === 0){
+    root.innerHTML = `<div class="empty-note">No SKUs with 2+ qualifying (\u226550 unit) inward events found yet.</div>`;
+    return;
+  }
+
+  const lifetimeSalesMap = {}; (DATA.lifetime_sales_by_sku || []).forEach(r => { lifetimeSalesMap[r.sku_group] = r; });
+  const lifetimeReturnsMap = {}; (DATA.lifetime_returns_by_sku || []).forEach(r => { lifetimeReturnsMap[r.sku_group] = r; });
+  const l30dSalesMap = {}; (DATA.l30d_sales_by_sku || []).forEach(r => { l30dSalesMap[r.sku_group] = r; });
+  const l30dReturnsMap = {}; (DATA.l30d_returns_by_sku || []).forEach(r => { l30dReturnsMap[r.sku_group] = r; });
+  const inwardsLifetimeMap = buildInwardsBySkuMap(); // lifetime_qty from existing sku_meta.json dataset
+  const storeInvMap = buildStoreInvBySkuMap();
+  const pipelineMap = buildPipelineBySkuMap();
+  const quarterlyMap = buildSkuQuarterlyHistory();
+  const metaMap = repeatEvalSkuMeta();
+
+  const quarterKeysPresent = fixedQuarterListSince2025();
+
+  const rows = skuGroups.map(sku => {
+    const cls = classMap[sku];
+    const life = lifetimeSalesMap[sku] || {};
+    const lifeRet = lifetimeReturnsMap[sku] || {};
+    const l30dSales = l30dSalesMap[sku] || {};
+    const l30dRet = l30dReturnsMap[sku] || {};
+    const inw = inwardsLifetimeMap[sku] || {};
+    const inv = storeInvMap[sku] || {};
+    const pipe = pipelineMap[sku] || {};
+    const meta = metaMap[sku] || {};
+
+    const currentInv = (inv.current_online_qty || 0) + (inv.current_offline_qty || 0);
+    const pipelinePending = pipe.pending_qty || 0;
+    const l30dQty = l30dSales.l30d_qty_sold || 0;
+    const l30dDailyRate = l30dQty / 30;
+    // DOI = (Current Inv + Pipeline) / L30D daily sales rate -- now using the
+    // real per-SKU Pipeline dataset (production_pipeline_data_v2, joined via
+    // NORMALIZED_SKU) instead of the Current-Inv-only workaround from before.
+    const doi = l30dDailyRate > 0 ? ((currentInv + pipelinePending) / l30dDailyRate) : null;
+
+    const quarters = quarterKeysPresent.map(qk => {
+      const cell = (quarterlyMap[sku] || {})[qk];
+      if (!cell) return {qty:null, gmPct:null};
+      return { qty: cell.qty, gmPct: cell.gross > 0 ? ((cell.gross - cell.cogs)/cell.gross*100) : null };
+    });
+
+    return {
+      sku_group: sku, l1: meta.l1, cat: meta.cat, m1: meta.m1, m2: meta.m2, m3: meta.m3,
+      total_sold: life.lifetime_qty_sold || 0,
+      total_inwarded: inw.lifetime_qty || 0,
+      total_returns: lifeRet.lifetime_return_qty || 0,
+      current_inv: currentInv,
+      pipeline_pending: pipelinePending,
+      ros: life.first_sale_date ? (life.lifetime_qty_sold || 0) / Math.max(1, daysBetween(life.first_sale_date, latestDataDate())) : null,
+      doi,
+      l30d_inwards: cls.events.filter(e => daysBetween(e.inward_date, latestDataDate()) <= 30).reduce((s,e) => s+e.qty, 0),
+      l30d_qty_sold: l30dQty,
+      l30d_returns: l30dRet.l30d_return_qty || 0,
+      quarters,
+      classification: cls.type,
+      reinward_count: cls.reinwardCount,
+      avg_qty_per_inward: cls.avgQtyPerInward,
+    };
+  });
+
+  const note = document.createElement('div');
+  note.className = 'empty-note';
+  note.innerHTML = 'Only SKUs with 2+ real (\u226550 unit) inward events are shown. <b>Reorder</b> = 2+ qualifying inwards in the same season, \u226560 days apart (season = H1 Jan-Jun / H2 Jul-Dec). <b>Repeat</b> = qualifying inwards spanning 2+ different seasons. Total Sold/Inwarded/Returns are TRUE lifetime figures; L30D figures are a real trailing-30-day window (not monthly-grain). The QoQ breakdown below is fixed from <b>Q1 2025</b> forward regardless of the main dashboard\'s rolling window. <b>DOI = (Current Inv + Pipeline) / L30D daily rate</b>, using the real per-SKU Pipeline dataset (production_pipeline_data_v2, via NORMALIZED_SKU) -- no STATUS filter applied on Pipeline, matching the existing Google-Sheets Pipeline dataset\'s convention.';
+  root.appendChild(note);
+
+  const sorted = sortRowsForDisplay(rows, {key:'total_sold', dir:'desc'});
+
+  const columns = [
+    {key:'image', label:'Image', sortable:false, render:r => skuThumb(r.sku_group), frozen:true, frozenLeft:0},
+    {key:'sku_group', label:'SKU Group', align:'left', frozen:true, frozenLeft:100},
+    {key:'total_sold', label:'Total Sold (lifetime)', render:r => Math.round(r.total_sold).toLocaleString()},
+    {key:'total_inwarded', label:'Total Inwarded (lifetime)', render:r => Math.round(r.total_inwarded).toLocaleString()},
+    {key:'total_returns', label:'Total Returns (lifetime)', render:r => Math.round(r.total_returns).toLocaleString()},
+    {key:'current_inv', label:'Current Inv', render:r => Math.round(r.current_inv).toLocaleString()},
+    {key:'pipeline_pending', label:'Pipeline (Pending Inward)', render:r => Math.round(r.pipeline_pending||0).toLocaleString()},
+    {key:'ros', label:'ROS (lifetime avg, units/day)', render:r => r.ros===null ? '\u2014' : r.ros.toFixed(2)},
+    {key:'doi', label:'DOI ((Inv+Pipeline)/L30D rate)', render:r => r.doi===null ? '\u2014' : r.doi.toFixed(0)+'d'},
+    {key:'l30d_inwards', label:'L30D Inwards', render:r => Math.round(r.l30d_inwards).toLocaleString()},
+    {key:'l30d_qty_sold', label:'L30D Qty Sold', render:r => Math.round(r.l30d_qty_sold).toLocaleString()},
+    {key:'l30d_returns', label:'L30D Returns', render:r => Math.round(r.l30d_returns).toLocaleString()},
+    {key:'reinward_count', label:'# Re-inwards', render:r => r.reinward_count},
+    {key:'avg_qty_per_inward', label:'Avg Qty/Inward', render:r => Math.round(r.avg_qty_per_inward).toLocaleString()},
+    {key:'classification', label:'Reorder / Repeat', render:r => {
+      const cls = r.classification;
+      const color = cls === 'Repeat' ? 'var(--thread)' : (cls.startsWith('Reorder (') ? 'var(--amber)' : 'var(--green)');
+      return `<span style="color:${color}; font-weight:600;">${cls}</span>`;
+    }},
+  ];
+
+  const section = document.createElement('div');
+  section.className = 'card-section';
+  section.innerHTML = `<h2>Repeat Evaluation <span class="rule"></span><span class="count">${sorted.length} SKU groups</span></h2>`;
+  const strip = document.createElement('div');
+  strip.className = 'pivot-strip';
+
+  function drawTable(sortState){
+    const displayRows = sortRowsForDisplay(rows, sortState);
+    strip.innerHTML = `<div class="pivot-block" style="min-width:100%;">${renderSkuTable(displayRows, columns, sortState, 'repeateval')}</div>`;
+    attachSkuTableSortHandlers(strip, 'repeateval', sortState, (newSort) => drawTable(newSort));
+    return displayRows;
+  }
+  const initialSort = {key:'total_sold', dir:'desc'};
+  const displayRows = drawTable(initialSort);
+  section.appendChild(strip);
+  root.appendChild(section);
+  addDownloadButton(section, 'repeat_evaluation.csv', displayRows, columns);
+
+  root.appendChild(buildQoQBreakdownSection(displayRows, quarterKeysPresent));
+}
+
+// QoQ Qty Sold / GM% breakdown, grouped two-row header per quarter (Quarter
+// name spanning "Qty sold" + "GM%" sub-columns) -- matches the layout Aditya
+// asked for directly, which the generic sortable-table renderer used above
+// can't produce (it only does flat single-row headers). Color scale is
+// per-ROW (each SKU's own quarters, red=worst -> green=best) so you can spot
+// which quarter was a SKU's best at a glance, same intent as the ageing
+// color scales elsewhere in this file.
+function buildQoQBreakdownSection(rowsInDisplayOrder, quarterKeys){
+  const section = document.createElement('div');
+  section.className = 'card-section';
+  section.innerHTML = `<h2>QoQ Qty Sold &amp; GM% (since Q1 2025) <span class="rule"></span><span class="count">${rowsInDisplayOrder.length} SKU groups \u00d7 ${quarterKeys.length} quarters</span></h2>`;
+
+  const qtyCellBg = (qty, allQty) => {
+    if (qty === null || qty === undefined) return '';
+    const present = allQty.filter(v => v !== null);
+    if (present.length < 2) return '';
+    const max = Math.max(...present), min = Math.min(...present);
+    const t = max > min ? (qty - min) / (max - min) : 1;
+    // red (worst quarter for this SKU) -> green (best quarter for this SKU)
+    const r = Math.round(193 - t * 82), g = Math.round(89 + t * 74), b = Math.round(74 + t * 57);
+    return `background:rgba(${r},${g},${b},0.32);`;
+  };
+
+  const headRow1 = quarterKeys.map(qk => { const [y,q] = qk.split('-'); return `<th colspan="2" style="text-align:center;">${q} ${y}</th>`; }).join('');
+  const headRow2 = quarterKeys.map(() => `<th>Qty sold</th><th>GM%</th>`).join('');
+
+  const bodyRows = rowsInDisplayOrder.map(r => {
+    const allQty = r.quarters.map(c => c ? c.qty : null);
+    const cells = r.quarters.map(c => {
+      if (!c || c.qty === null){
+        return `<td>\u2014</td><td>\u2014</td>`;
+      }
+      const gmCell = c.gmPct === null ? '\u2014' :
+        `<span style="${c.gmPct < IDEAL_GM_PCT ? 'text-decoration:underline; text-decoration-color:var(--red); text-decoration-thickness:2px;' : ''}">${c.gmPct.toFixed(1)}%</span>`;
+      return `<td style="${qtyCellBg(c.qty, allQty)}">${Math.round(c.qty).toLocaleString()}</td><td>${gmCell}</td>`;
+    }).join('');
+    return `<tr><td class="rowlabel" style="text-align:left;">${r.sku_group}</td>${cells}</tr>`;
+  }).join('');
+
+  const wrap = document.createElement('div');
+  wrap.className = 'pivot-strip';
+  wrap.innerHTML = `<div class="pivot-block" style="min-width:100%; overflow-x:auto;">
+    <table class="ptable">
+      <thead>
+        <tr><th style="text-align:left;">SKU Group</th>${headRow1}</tr>
+        <tr><th></th>${headRow2}</tr>
+      </thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+  </div>`;
+  section.appendChild(wrap);
+
+  const csvColumns = [
+    {key:'sku_group', label:'SKU Group'},
+    ...quarterKeys.flatMap((qk, qi) => ([
+      {key:`${qk}_qty`, label:`${qk} Qty sold`, render:r => { const c = r.quarters[qi]; return c && c.qty!==null ? Math.round(c.qty) : ''; }},
+      {key:`${qk}_gm`, label:`${qk} GM%`, render:r => { const c = r.quarters[qi]; return c && c.gmPct!==null ? c.gmPct.toFixed(1) : ''; }},
+    ])),
+  ];
+  addDownloadButton(section, 'repeat_evaluation_qoq.csv', rowsInDisplayOrder, csvColumns);
+
+  return section;
+}
+
+// ===========================================================================
+// FRESH SKU REORDER ENGINE
+// ===========================================================================
+
+// ---- GitHub-as-backend persistence for min-criteria inputs -----------------
+// This is a static GitHub Pages site with no server/database, so "saving" an
+// editable input durably (surviving refreshes AND rebuilds) means writing
+// directly back to the repo via GitHub's own Contents API from the browser --
+// no separate backend needed, and every save is a real git commit, so commit
+// history on data/min_criteria.json IS the audit log Aditya asked for.
+//
+// SECURITY NOTE: this requires a GitHub Personal Access Token with
+// Contents:write scope on THIS repo only (fine-grained PAT, repo-scoped --
+// never use a classic all-repos token here). The token is stored in this
+// browser's localStorage only, never written into any committed file. Anyone
+// with access to this browser's localStorage could use it to push to the
+// repo, same trust boundary as anyone with direct git push access already
+// has -- treat it accordingly.
+const GITHUB_REPO = 'adityab-stack/Simulator-Dashboard';
+const MIN_CRITERIA_PATH = 'data/min_criteria.json';
+
+function getGithubToken(promptIfMissing){
+  let token = localStorage.getItem('gh_pat_snitch_dashboard');
+  if (!token && promptIfMissing){
+    token = prompt('Enter a GitHub Personal Access Token (fine-grained, scoped to ONLY this repo, Contents: Read & Write permission). This is stored in this browser only, never committed anywhere:');
+    if (token) localStorage.setItem('gh_pat_snitch_dashboard', token.trim());
+  }
+  return token ? token.trim() : null;
+}
+
+async function saveMinCriteriaToGithub(payload){
+  const token = getGithubToken(true);
+  if (!token){ alert('No token provided -- not saved.'); return false; }
+  const apiUrl = `https://api.github.com/repos/${GITHUB_REPO}/contents/${MIN_CRITERIA_PATH}`;
+  try {
+    // Need the current file's sha to update it (GitHub Contents API requires
+    // this for updates to an existing file; omitted entirely on first-ever
+    // save when the file doesn't exist yet).
+    let sha = null;
+    const existing = await fetch(apiUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (existing.ok){ sha = (await existing.json()).sha; }
+
+    const content = btoa(unescape(encodeURIComponent(JSON.stringify(payload, null, 2))));
+    const body = {
+      message: `Update Fresh SKU min-criteria (via dashboard, ${new Date().toISOString()})`,
+      content,
+    };
+    if (sha) body.sha = sha;
+
+    const res = await fetch(apiUrl, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok){
+      const errText = await res.text();
+      alert(`Save failed (${res.status}): ${errText}\n\nIf this is a 401/403, your token may be wrong/expired -- it will be cleared so you can re-enter it.`);
+      if (res.status === 401 || res.status === 403) localStorage.removeItem('gh_pat_snitch_dashboard');
+      return false;
+    }
+    return true;
+  } catch (err){
+    alert('Save failed: ' + err.message);
+    return false;
+  }
+}
+
+// ---- Fresh SKU identification ----------------------------------------------
+// Fresh = every known SKU EXCEPT those already classified 'Reorder' (genuine,
+// >=60d-apart same-season pair) or 'Repeat' (multi-season) in the Repeat
+// Evaluation tab's own classification map. This deliberately includes SKUs
+// with only 1 qualifying inward ever, AND the "Reorder (< 60d apart --
+// check)" edge case (no confirmed reorder decision made yet either way) --
+// both are, definitionally, SKUs that haven't had a genuine reorder decision
+// made on them.
+function identifyFreshSkus(){
+  const classMap = buildRepeatClassificationMap(); // only has entries for SKUs with 2+ qualifying events
+  const universe = new Set((DATA.lifetime_sales_by_sku || []).map(r => r.sku_group));
+  const fresh = [];
+  universe.forEach(sku => {
+    const cls = classMap[sku];
+    const isConfirmedReorderOrRepeat = cls && (cls.type === 'Repeat' || cls.type === 'Reorder');
+    if (!isConfirmedReorderOrRepeat) fresh.push(sku);
+  });
+  return fresh;
+}
+
+function fmtQuarterKey(y, q){ return `${y}-Q${q}`; }
+function nextQuarterAfter(dateIso){
+  const d = new Date(dateIso);
+  let y = d.getFullYear();
+  let q = Math.ceil((d.getMonth()+1)/3) + 1;
+  if (q > 4){ q = 1; y += 1; }
+  return fmtQuarterKey(y, q);
+}
+
+function freshSkuMinCriteriaKey(l1, cat){ return `${l1 || ''}||${cat || ''}`; }
+
+function renderFreshSkuTab(){
+  const root = document.getElementById('freshsku-root');
+  root.innerHTML = '';
+
+  const tabBar = document.createElement('div');
+  tabBar.style.cssText = 'display:flex; gap:8px; margin-bottom:16px;';
+  const subtabs = [{id:'inputs', label:'Inputs'}, {id:'suggestions', label:'Suggestions'}];
+  window._freshSkuSubtab = window._freshSkuSubtab || 'inputs';
+  subtabs.forEach(t => {
+    const btn = document.createElement('button');
+    btn.textContent = t.label;
+    const active = window._freshSkuSubtab === t.id;
+    btn.style.cssText = `padding:8px 16px; border-radius:6px; border:1px solid var(--line); cursor:pointer; font-family:'IBM Plex Mono', monospace; font-size:12px; ${active ? 'background:var(--amber); color:#000; font-weight:600;' : 'background:var(--panel-2); color:var(--text);'}`;
+    btn.addEventListener('click', () => { window._freshSkuSubtab = t.id; renderFreshSkuTab(); });
+    tabBar.appendChild(btn);
+  });
+  root.appendChild(tabBar);
+
+  const content = document.createElement('div');
+  root.appendChild(content);
+
+  if (window._freshSkuSubtab === 'inputs'){
+    renderFreshSkuInputsSubtab(content);
+  } else {
+    renderFreshSkuSuggestionsSubtab(content);
+  }
+}
+
+function renderFreshSkuInputsSubtab(root){
+  const note = document.createElement('div');
+  note.className = 'empty-note';
+  note.innerHTML = 'Set MINIMUM criteria per L1/Category (GM% and F30DsROS are minimums; Return% is a MAXIMUM -- lower is better). A Fresh SKU only shows as a reorder Suggestion if it clears every one of these for its own L1/Category. Defaults shown (GM% 55, Return% 20, F30DsROS 10) are pre-filled for any combo you haven\'t saved a value for yet -- edit and Save to override. Saving writes directly to <code>data/min_criteria.json</code> in the repo via GitHub\'s API (see code comment for the security note on the access token this needs) -- git commit history on that file is your change log.';
+  root.appendChild(note);
+
+  const metaMap = repeatEvalSkuMeta();
+  const combos = new Map(); // "l1||cat" -> {l1,cat}
+  Object.values(metaMap).forEach(m => {
+    if (m.l1 || m.cat) combos.set(freshSkuMinCriteriaKey(m.l1, m.cat), {l1: m.l1, cat: m.cat});
+  });
+  const rows = [...combos.values()].sort((a,b) => (a.l1||'').localeCompare(b.l1||'') || (a.cat||'').localeCompare(b.cat||''));
+
+  const section = document.createElement('div');
+  section.className = 'card-section';
+  section.innerHTML = `<h2>Min Criteria <span class="rule"></span><span class="count">${rows.length} L1 \u00d7 Category combos</span></h2>`;
+
+  // Defaults per Aditya: GM% 55 min, Return% 20 max, F30DsROS 10 min --
+  // pre-filled for any L1/Cat combo with no saved override yet.
+  const DEFAULT_GM_MIN = 55, DEFAULT_RETURN_MAX = 20, DEFAULT_F30DSROS_MIN = 10;
+
+  const existing = DATA.min_criteria || {};
+  const table = document.createElement('table');
+  table.className = 'ptable';
+  table.innerHTML = `
+    <thead><tr>
+      <th style="text-align:left;">L1</th><th style="text-align:left;">Cat</th>
+      <th>GM% (min)</th><th>F30DsROS (min)</th><th>Return% (max)</th>
+    </tr></thead>
+    <tbody>
+      ${rows.map(r => {
+        const key = freshSkuMinCriteriaKey(r.l1, r.cat);
+        const vals = existing[key] || {};
+        return `<tr data-key="${key}" data-l1="${r.l1||''}" data-cat="${r.cat||''}">
+          <td class="rowlabel">${r.l1||'—'}</td><td class="rowlabel">${r.cat||'—'}</td>
+          <td><input type="number" step="0.1" class="mc-input" data-field="gm_min" value="${vals.gm_min ?? DEFAULT_GM_MIN}" style="width:70px; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:4px 6px; border-radius:4px;"></td>
+          <td><input type="number" step="0.01" class="mc-input" data-field="f30dsros_min" value="${vals.f30dsros_min ?? DEFAULT_F30DSROS_MIN}" style="width:70px; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:4px 6px; border-radius:4px;"></td>
+          <td><input type="number" step="0.1" class="mc-input" data-field="return_max" value="${vals.return_max ?? DEFAULT_RETURN_MAX}" style="width:70px; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:4px 6px; border-radius:4px;"></td>
+        </tr>`;
+      }).join('')}
+    </tbody>`;
+  section.appendChild(table);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.textContent = 'Save to repo (data/min_criteria.json)';
+  saveBtn.style.cssText = 'margin-top:14px; background:var(--amber); color:#000; border:none; padding:10px 18px; border-radius:6px; font-weight:600; cursor:pointer; font-family:\'IBM Plex Mono\', monospace; font-size:12px;';
+  saveBtn.addEventListener('click', async () => {
+    const payload = {};
+    table.querySelectorAll('tr[data-key]').forEach(tr => {
+      const key = tr.dataset.key;
+      const entry = { l1: tr.dataset.l1, cat: tr.dataset.cat };
+      tr.querySelectorAll('.mc-input:not([disabled])').forEach(input => {
+        const v = parseFloat(input.value);
+        if (!isNaN(v)) entry[input.dataset.field] = v;
+      });
+      if (Object.keys(entry).length > 2) payload[key] = entry;
+    });
+    saveBtn.textContent = 'Saving...';
+    saveBtn.disabled = true;
+    const ok = await saveMinCriteriaToGithub(payload);
+    saveBtn.textContent = ok ? 'Saved \u2713' : 'Save to repo (data/min_criteria.json)';
+    saveBtn.disabled = false;
+    if (ok) DATA.min_criteria = payload;
+    setTimeout(() => { saveBtn.textContent = 'Save to repo (data/min_criteria.json)'; }, 2500);
+  });
+  section.appendChild(saveBtn);
+  root.appendChild(section);
+}
+
+function renderFreshSkuSuggestionsSubtab(root){
+  const freshSkus = identifyFreshSkus();
+  if (freshSkus.length === 0){
+    root.innerHTML = `<div class="empty-note">No Fresh SKUs found.</div>`;
+    return;
+  }
+
+  const note = document.createElement('div');
+  note.className = 'empty-note';
+  note.innerHTML = `<b>Fresh SKU</b> = not yet confirmed Reorder/Repeat in the Repeat Evaluation tab (includes never-reordered SKUs and same-season pairs <60 days apart that haven\'t been confirmed as a genuine reorder). <b>F30DsROS</b> = units/day sold in the first 30 days since first sale. <b>GM%</b> and <b>Return%</b> here are lifetime figures. <b>Ageing</b> = current ageing bucket/weighted age (same snapshot as the Ageing tab). Suggested Quarter is a simple placeholder (next calendar quarter after today) -- flag if you want season-aware logic instead.`;
+  root.appendChild(note);
+
+  const lifetimeSalesMap = {}; (DATA.lifetime_sales_by_sku || []).forEach(r => { lifetimeSalesMap[r.sku_group] = r; });
+  const lifetimeReturnsMap = {}; (DATA.lifetime_returns_by_sku || []).forEach(r => { lifetimeReturnsMap[r.sku_group] = r; });
+  const f30dSalesMap = {}; (DATA.f30d_sales_by_sku || []).forEach(r => { f30dSalesMap[r.sku_group] = r; });
+  const storeInvMap = buildStoreInvBySkuMap();
+  const pipelineMap = buildPipelineBySkuMap();
+  const ageingMap = buildAgeingBySkuMap();
+  const metaMap = repeatEvalSkuMeta();
+  const minCriteria = DATA.min_criteria || {};
+  const latest = latestDataDate();
+  const suggestedQuarter = nextQuarterAfter(latest);
+
+  const rows = freshSkus.map(sku => {
+    const life = lifetimeSalesMap[sku] || {};
+    const lifeRet = lifetimeReturnsMap[sku] || {};
+    const f30dSales = f30dSalesMap[sku] || {};
+    const inv = storeInvMap[sku] || {};
+    const pipe = pipelineMap[sku] || {};
+    const ag = ageingMap[sku] || {};
+    const meta = metaMap[sku] || {};
+
+    const gmPct = life.lifetime_gross_sales > 0 ? ((life.lifetime_gross_sales - life.lifetime_cogs_sold) / life.lifetime_gross_sales * 100) : null;
+    const returnPct = life.lifetime_qty_sold > 0 ? ((lifeRet.lifetime_return_qty || 0) / life.lifetime_qty_sold * 100) : null;
+    const f30dQty = f30dSales.f30d_qty_sold || 0;
+    const f30dRos = f30dQty / 30;
+    const currentInv = (inv.current_online_qty || 0) + (inv.current_offline_qty || 0);
+    const pipelinePending = pipe.pending_qty || 0;
+
+    const critKey = freshSkuMinCriteriaKey(meta.l1, meta.cat);
+    const crit = minCriteria[critKey] || {};
+    const checks = {
+      gm: crit.gm_min !== undefined ? (gmPct !== null && gmPct >= crit.gm_min) : null,
+      f30dros: crit.f30dsros_min !== undefined ? (f30dRos >= crit.f30dsros_min) : null,
+      ret: crit.return_max !== undefined ? (returnPct !== null && returnPct <= crit.return_max) : null,
+    };
+    const applicableChecks = Object.values(checks).filter(v => v !== null);
+    const allPass = applicableChecks.length > 0 && applicableChecks.every(v => v === true);
+
+    return {
+      sku_group: sku, l1: meta.l1, cat: meta.cat,
+      gm_pct: gmPct, f30d_ros: f30dRos, return_pct: returnPct,
+      current_inv: currentInv, pipeline_pending: pipelinePending,
+      ageing_bucket: ag.ageing_bucket, weighted_age_days: ag.weighted_age_days,
+      checks, all_pass: applicableChecks.length > 0 ? allPass : null,
+      suggested_quarter: suggestedQuarter,
+    };
+  });
+
+  const passBadge = (v) => v === null ? '<span style="color:var(--muted);">no criteria set</span>' : (v ? '<span style="color:var(--green); font-weight:600;">\u2713 Pass</span>' : '<span style="color:var(--red); font-weight:600;">\u2717 Fail</span>');
+  const checkCell = (v) => v === null ? '\u2014' : (v ? '<span style="color:var(--green);">\u2713</span>' : '<span style="color:var(--red);">\u2717</span>');
+
+  const columns = [
+    {key:'image', label:'Image', sortable:false, render:r => skuThumb(r.sku_group), frozen:true, frozenLeft:0},
+    {key:'sku_group', label:'SKU Group', align:'left', frozen:true, frozenLeft:100},
+    {key:'l1', label:'L1', align:'left'},
+    {key:'cat', label:'Cat', align:'left'},
+    {key:'gm_pct', label:'GM%', render:r => r.gm_pct===null ? '\u2014' : r.gm_pct.toFixed(1)+'% '+checkCell(r.checks.gm)},
+    {key:'f30d_ros', label:'F30DsROS', render:r => r.f30d_ros.toFixed(2)+' '+checkCell(r.checks.f30dros)},
+    {key:'return_pct', label:'Return%', render:r => r.return_pct===null ? '\u2014' : r.return_pct.toFixed(1)+'% '+checkCell(r.checks.ret)},
+    {key:'current_inv', label:'Current Inv', render:r => Math.round(r.current_inv).toLocaleString()},
+    {key:'pipeline_pending', label:'Pipeline', render:r => Math.round(r.pipeline_pending).toLocaleString()},
+    {key:'ageing_bucket', label:'Ageing', render:r => r.ageing_bucket ? `${r.ageing_bucket}${r.weighted_age_days!==null&&r.weighted_age_days!==undefined ? ' ('+r.weighted_age_days.toFixed(0)+'d)' : ''}` : '\u2014'},
+    {key:'suggested_quarter', label:'Suggested Reorder Qtr', render:r => r.suggested_quarter},
+    {key:'all_pass', label:'Overall', render:r => passBadge(r.all_pass)},
+  ];
+
+  const section = document.createElement('div');
+  section.className = 'card-section';
+  section.innerHTML = `<h2>Fresh SKU Reorder Suggestions <span class="rule"></span><span class="count">${rows.length} fresh SKUs</span></h2>`;
+  const strip = document.createElement('div');
+  strip.className = 'pivot-strip';
+
+  function drawTable(sortState){
+    const displayRows = sortRowsForDisplay(rows, sortState);
+    strip.innerHTML = `<div class="pivot-block" style="min-width:100%;">${renderSkuTable(displayRows, columns, sortState, 'freshsku')}</div>`;
+    attachSkuTableSortHandlers(strip, 'freshsku', sortState, (newSort) => drawTable(newSort));
+    return displayRows;
+  }
+  const displayRows = drawTable({key:'sku_group', dir:'asc'});
+  section.appendChild(strip);
+  root.appendChild(section);
+  addDownloadButton(section, 'fresh_sku_reorder_suggestions.csv', displayRows, columns);
 }
 </script>
+
+
 
 </body>
 </html>
