@@ -116,33 +116,7 @@
   .ptable td.dash{ color:var(--text-faint); }
   .ptable td.delta-behind{ color:var(--red); }
   .ptable td.delta-ahead{ color:var(--green); }
-  .ptable tr.overall-row{ background:rgba(232,163,61,0.12); }
-  .ptable tr.overall-row td{ font-weight:600; }
-  .ptable tr.overall-row td.rowlabel{ color:var(--amber); }
   .sortable-th{ cursor:pointer; user-select:none; }
-
-  /* Sales vs Inwards: cream/black theme, distinct from the rest of the (dark) app */
-  .svi-table{ border-collapse:collapse; background:#F5EFE0; color:#1a1a1a; }
-  .svi-table th, .svi-table td{ padding:6px 9px; text-align:center; vertical-align:middle;
-    font-family:'IBM Plex Mono', monospace; font-size:12px; border:1px solid #DCD2B4; white-space:nowrap; }
-  .svi-table thead th{ background:#EAE0BE; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:0.05em;
-    position:sticky; top:0; z-index:3; }
-  .svi-table thead tr + tr th{ top:30px; } /* only a real 2nd header row shifts down -- a lone row stays at top:0 */
-  .svi-table td.rowlabel{ font-family:'Inter'; font-weight:500; text-align:center; }
-  .svi-table td.dash{ color:#8a8065; }
-  .svi-table .svi-sticky{ position:sticky; background:#F5EFE0; z-index:2; }
-  .svi-table thead .svi-sticky{ background:#EAE0BE; z-index:4; top:0; }
-  .svi-table td.delta-behind{ color:var(--red); }
-  .svi-table td.delta-ahead{ color:var(--green); }
-  .svi-table tr.overall-row{ background:rgba(232,163,61,0.18); }
-  .svi-table tr.overall-row td{ font-weight:600; }
-  .svi-table tr.overall-row td.rowlabel{ color:#8a5a00; }
-  .svi-table .svi-block-end{ border-right:3px solid #B8AA7A; }
-  .svi-table td.svi-top3{ background:#BFE3C2; color:#0F4C1F; font-weight:700; }
-  .svi-table tr.svi-fit-total td{ font-weight:700; background:#E7DCAE; }
-  .svi-table tr.svi-fit-total td.svi-sticky{ background:#E7DCAE; }
-  .svi-table tr.svi-cat-total td{ font-weight:700; background:#D6C583; }
-  .svi-table tr.svi-cat-total td.svi-sticky{ background:#D6C583; }
   .sortable-th:hover{ color:var(--amber); }
   .total-row td{ font-weight:600; border-top:2px solid var(--line); background:var(--panel-2); color:var(--text); }
   .total-row td.total-label{ color:var(--amber); }
@@ -238,16 +212,11 @@
     <button data-page="quartile">QUARTILE</button>
     <button data-page="livesku">LIVE SKU GROUPS</button>
     <button data-page="clicks">CLICKS</button>
-<<<<<<< HEAD
     <button data-page="ageing">AGEING</button>
     <button data-page="storecutsize">STORE CUT SIZE</button>
     <button data-page="salesvsinwards">SALES VS INWARDS</button>
     <button data-page="repeateval">REPEAT EVALUATION</button>
     <button data-page="freshsku">FRESH SKU REORDER</button>
-=======
-    <button data-page="storecutsize">STORE CUT SIZE</button>
-    <button data-page="salesvsinwards">SALES VS INWARDS</button>
->>>>>>> origin/main
     <button data-page="storereturns">STORE RETURNS</button>
   </div>
   <div class="active-path" id="active-path"></div>
@@ -282,7 +251,6 @@
   <div id="page-clicks" style="display:none;">
     <div id="clicks-root"></div>
   </div>
-<<<<<<< HEAD
   <div id="page-ageing" style="display:none;">
     <div id="ageing-root"></div>
   </div>
@@ -292,8 +260,6 @@
   <div id="page-freshsku" style="display:none;">
     <div id="freshsku-root"></div>
   </div>
-=======
->>>>>>> origin/main
   <div id="page-storecutsize" style="display:none;">
     <div id="storecutsize-root"></div>
   </div>
@@ -359,12 +325,8 @@ function currentMonthKey(){
 const DATA_PARTS = [
   'data/meta.json', 'data/sales.json', 'data/sales_by_sku.json', 'data/sku_meta.json',
   'data/inventory.json', 'data/pipeline.json', 'data/returns_actual.json', 'data/targets.json',
-<<<<<<< HEAD
   'data/livesku.json', 'data/clicks.json', 'data/repeat_eval.json',
   'data/storecutsize.json', 'data/salesvsinwards.json', 'data/storereturns.json'
-=======
-  'data/livesku.json', 'data/clicks.json', 'data/storecutsize.json', 'data/salesvsinwards.json', 'data/storereturns.json'
->>>>>>> origin/main
 ];
 
 Promise.all(DATA_PARTS.map(url => fetch(url).then(r => {
@@ -573,12 +535,9 @@ function populateFilters(){
       document.getElementById('page-quartile').style.display = currentPage === 'quartile' ? '' : 'none';
       document.getElementById('page-livesku').style.display = currentPage === 'livesku' ? '' : 'none';
       document.getElementById('page-clicks').style.display = currentPage === 'clicks' ? '' : 'none';
-<<<<<<< HEAD
       document.getElementById('page-ageing').style.display = currentPage === 'ageing' ? '' : 'none';
       document.getElementById('page-repeateval').style.display = currentPage === 'repeateval' ? '' : 'none';
       document.getElementById('page-freshsku').style.display = currentPage === 'freshsku' ? '' : 'none';
-=======
->>>>>>> origin/main
       document.getElementById('page-storecutsize').style.display = currentPage === 'storecutsize' ? '' : 'none';
       document.getElementById('page-salesvsinwards').style.display = currentPage === 'salesvsinwards' ? '' : 'none';
       document.getElementById('page-storereturns').style.display = currentPage === 'storereturns' ? '' : 'none';
@@ -803,7 +762,6 @@ function render(){
     renderClicksTab(f);
     return;
   }
-<<<<<<< HEAD
   if (currentPage === 'ageing'){
     renderAgeingTab(f);
     return;
@@ -816,8 +774,6 @@ function render(){
     renderFreshSkuTab();
     return;
   }
-=======
->>>>>>> origin/main
   if (currentPage === 'storecutsize'){
     renderStoreCutSizeTab(f);
     return;
@@ -1097,38 +1053,21 @@ function clicksThumb(r){
     : `<span class="sku-thumb-placeholder sku-thumb-placeholder-lg"></span>`;
 }
 
-const CLICKS_TABLE_HEADER = `<th>SKU Group</th><th>Live Date</th><th>L1</th><th>Category</th><th>Meta 1</th><th>Meta 2</th><th>Meta 3</th><th>WH Inv</th>
-  <th>Sets Available</th><th>Store Count</th><th>Total Store Inv</th>
-  <th>Clicks 1-15</th><th>Clicks 15-30</th><th>Last 30 Days</th>
-  <th>Total Sales</th><th>Retail Sales</th><th>Shopify Sales</th><th>MP Sales</th>
-  <th>Overall DOI</th><th>Retail DOI</th><th>Shopify DOI</th><th>MP DOI</th>
-  <th>Image Link</th><th>Image</th>`;
+const CLICKS_TABLE_HEADER = `<th>SKU Group</th><th>Live Date</th><th>L1</th><th>Meta 1</th><th>Meta 2</th><th>Meta 3</th><th>WH Inv</th>
+  <th>Clicks 1-15</th><th>Clicks 15-30</th><th>Last 30 Days</th><th>Image Link</th><th>Image</th>`;
 function clicksRowHTML(r){
   const link = r.image_url ? `<a href="${r.image_url}" target="_blank" rel="noopener">Link</a>` : '—';
-  const n = (v) => fmtNum(v) ?? '—';
   return `<tr>
     <td class="rowlabel">${r.sku_group}</td>
     <td>${fmtDMY(r.live_date) || '—'}</td>
     <td>${r.l1 || '—'}</td>
-    <td>${r.cat || '—'}</td>
     <td>${r.m1 || '—'}</td>
     <td>${r.m2 || '—'}</td>
     <td>${r.m3 || '—'}</td>
-    <td>${n(r.wh_qty)}</td>
-    <td>${n(r.sets_available)}</td>
-    <td>${n(r.store_count)}</td>
-    <td>${n(r.total_store_inventory)}</td>
-    <td>${n(r.clicks_1_15)}</td>
-    <td>${n(r.clicks_15_30)}</td>
-    <td>${n(r.clicks_last_30)}</td>
-    <td>${n(r.ttl_sales)}</td>
-    <td>${n(r.retail_sales)}</td>
-    <td>${n(r.shopify_sales)}</td>
-    <td>${n(r.mp_sales)}</td>
-    <td>${n(r.overall_doi)}</td>
-    <td>${n(r.retail_doi)}</td>
-    <td>${n(r.shopify_doi)}</td>
-    <td>${n(r.mp_doi)}</td>
+    <td>${fmtNum(r.wh_qty)}</td>
+    <td>${fmtNum(r.clicks_1_15)}</td>
+    <td>${fmtNum(r.clicks_15_30)}</td>
+    <td>${fmtNum(r.clicks_last_30)}</td>
     <td>${link}</td>
     <td>${clicksThumb(r)}</td>
   </tr>`;
@@ -1794,10 +1733,7 @@ function renderStoreReturnsTab(f){
     </div>`;
 }
 
-<<<<<<< HEAD
 
-=======
->>>>>>> origin/main
 function clicksMonthlyExcluded(r){
   const sku = (r.sku_group || '').toUpperCase();
   return sku.startsWith('MP-') || sku.startsWith('FK-') || sku.startsWith('PP') || sku.startsWith('B2B');
