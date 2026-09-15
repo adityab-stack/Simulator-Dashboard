@@ -796,10 +796,19 @@ def _load_snowflake_private_key():
         with open(key_path, "rb") as f:
             pem_bytes = f.read()
     elif key_content:
-        # GitHub Actions secrets are single strings; make sure literal "\n"
-        # sequences (common when pasting a multi-line key into a secret box)
-        # are converted back to real newlines before parsing.
-        pem_bytes = key_content.replace("\\n", "\n").encode()
+        key_content = key_content.strip()
+        if "BEGIN" in key_content:
+            # Raw PEM was pasted directly. GitHub's secret box or the OS
+            # clipboard can sometimes mangle real newlines when pasting
+            # multi-line text; recover literal "\n" sequences if present.
+            pem_bytes = key_content.replace("\\n", "\n").encode()
+        else:
+            # Preferred path: secret holds base64 of the raw .p8 file
+            # (produced with e.g. `base64 -w0 snowflake_rsa_key.p8`). This
+            # sidesteps newline corruption entirely since base64 has no
+            # newlines to lose in transit.
+            import base64
+            pem_bytes = base64.b64decode(key_content)
     else:
         return None
 
