@@ -781,15 +781,45 @@ def _load_snowflake_creds():
             os.environ.setdefault(k, v)
 
 
+def _load_snowflake_private_key():
+    """Loads the RSA private key for key-pair auth, either from a local file
+    path (SNOWFLAKE_PRIVATE_KEY_PATH, for local dev) or from raw PEM content
+    in an env var (SNOWFLAKE_PRIVATE_KEY, for GitHub Actions where there's no
+    persistent file on disk to point to). Returns DER-encoded bytes as
+    required by snowflake.connector's `private_key` connect() param."""
+    from cryptography.hazmat.primitives import serialization
+
+    key_path = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PATH")
+    key_content = os.environ.get("SNOWFLAKE_PRIVATE_KEY")
+
+    if key_path:
+        with open(key_path, "rb") as f:
+            pem_bytes = f.read()
+    elif key_content:
+        # GitHub Actions secrets are single strings; make sure literal "\n"
+        # sequences (common when pasting a multi-line key into a secret box)
+        # are converted back to real newlines before parsing.
+        pem_bytes = key_content.replace("\\n", "\n").encode()
+    else:
+        return None
+
+    private_key = serialization.load_pem_private_key(pem_bytes, password=None)
+    return private_key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+
 def _snowflake_connect():
     import platform
     platform.libc_ver = lambda *a, **k: ('', '')  # Windows Store python.exe workaround
     import snowflake.connector
 
     _load_snowflake_creds()
-    required = ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_PASSWORD",
-                "SNOWFLAKE_WAREHOUSE", "SNOWFLAKE_DATABASE", "SNOWFLAKE_SCHEMA"]
-    missing = [k for k in required if not os.environ.get(k)]
+    base_required = ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER",
+                      "SNOWFLAKE_WAREHOUSE", "SNOWFLAKE_DATABASE", "SNOWFLAKE_SCHEMA"]
+    missing = [k for k in base_required if not os.environ.get(k)]
     if missing:
         print(f"ERROR: missing Snowflake env vars: {', '.join(missing)}")
         print("Locally: create snowflake_credentials.json (see README/chat). In GitHub")
@@ -797,6 +827,26 @@ def _snowflake_connect():
         sys.exit(1)
 
     print("Connecting to Snowflake...")
+    private_key_der = _load_snowflake_private_key()
+
+    if private_key_der is not None:
+        # Key-pair auth (preferred): no MFA/TOTP prompt, works unattended.
+        return snowflake.connector.connect(
+            account=os.environ["SNOWFLAKE_ACCOUNT"],
+            user=os.environ["SNOWFLAKE_USER"],
+            private_key=private_key_der,
+            warehouse=os.environ["SNOWFLAKE_WAREHOUSE"],
+            database=os.environ["SNOWFLAKE_DATABASE"],
+            schema=os.environ["SNOWFLAKE_SCHEMA"],
+        )
+
+    # Fallback: password auth (only works if MFA/TOTP isn't enforced, or for
+    # a manual one-off run where you can supply a TOTP code interactively).
+    if not os.environ.get("SNOWFLAKE_PASSWORD"):
+        print("ERROR: no SNOWFLAKE_PRIVATE_KEY_PATH/SNOWFLAKE_PRIVATE_KEY and no "
+              "SNOWFLAKE_PASSWORD found. Set up key-pair auth (see README/chat) "
+              "or provide a password.")
+        sys.exit(1)
     return snowflake.connector.connect(
         account=os.environ["SNOWFLAKE_ACCOUNT"],
         user=os.environ["SNOWFLAKE_USER"],
