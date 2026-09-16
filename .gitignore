@@ -10,3 +10,6 @@ test_snowflake.py
 snowflake_rsa_key.p8
 Demand_planning/            
 Github SS27 Dashboard/
+build_data_t.py
+index_t.html
+snowflake_rsa_key.pub
