@@ -797,13 +797,6 @@ def _load_snowflake_private_key():
             pem_bytes = f.read()
     elif key_content:
         key_content = key_content.strip()
-        # TEMPORARY DIAGNOSTIC - remove once this is working. Prints only
-        # length and a few boundary characters, never the actual key.
-        print(f"[diag] SNOWFLAKE_PRIVATE_KEY length={len(key_content)}, "
-              f"starts_with={key_content[:15]!r}, ends_with={key_content[-15:]!r}, "
-              f"contains_BEGIN={'BEGIN' in key_content}, "
-              f"contains_literal_backslash_n={chr(92)+'n' in key_content}, "
-              f"contains_real_newline={chr(10) in key_content}")
         if "BEGIN" in key_content:
             # Raw PEM was pasted directly. GitHub's secret box or the OS
             # clipboard can sometimes mangle real newlines when pasting
