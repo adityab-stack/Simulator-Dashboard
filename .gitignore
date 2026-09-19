@@ -13,3 +13,4 @@ Github SS27 Dashboard/
 build_data_t.py
 index_t.html
 snowflake_rsa_key.pub
+offline_ros_check.py

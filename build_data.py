@@ -267,6 +267,95 @@ RETURNS_BY_SKU_QUERY = f"""
     GROUP BY TO_CHAR(DATE, 'YYYY-MM'), SKU_GROUP
 """
 
+# Replaces the old "Inv Data 2" Google Sheet tab (fed via IMPORTRANGE from
+# another sheet through an n8n job that has proven unreliable). Same daily
+# snapshot grain as before -- the frontend still does its own "latest
+# snapshot within month" pick per leaf combo, so no change needed there.
+INVENTORY_QUERY = """
+    SELECT
+        INV_DATE, L1_CATEGORY, CATEGORY, META1, META2, META3,
+        MP_INV_QTY, ONLINE_INV_QTY, OFFLINE_INV_QTY, TOTAL_INV_QTY,
+        MP_INV_VALUE, ONLINE_INV_VALUE, OFFLINE_INV_VALUE, TOTAL_INV_VALUE
+    FROM SNITCH_DB.MAPLEMONK.INV_FOR_AUTO
+    WHERE L1_CATEGORY IS NOT NULL AND CATEGORY IS NOT NULL
+"""
+
+# Replaces the old "Pipeline" Google Sheet tab, at the same leaf grain
+# (L1+Cat+Meta1+Meta2+Meta3) keyed by the FDD month, matching the original
+# Overall-tab formula exactly (no STATUS filter).
+# NOTE: uses FDD (a real DATE column) rather than FDD_MONTH (a free-text
+# VARCHAR of unknown format) -- month_key() only knows how to derive a
+# reliable "YYYY-MM" from an actual date object; fed a string, it returns
+# None unconditionally (by design, to treat placeholder text as undated),
+# which would have silently marked every pipeline row as undated if FDD_MONTH
+# had been used directly here.
+# NOTE 2: assumes COGS here is a per-row TOTAL cost, not a per-unit rate (the
+# old sheet stored a per-unit rate and this code multiplied by qty) --
+# confirm this against real numbers after first run; if COGS turns out to be
+# per-unit here too, change cogs_value below back to `qty * (cogs or 0)`.
+PIPELINE_QUERY = """
+    SELECT
+        L1_CATEGORY, CATEGORY, META1, META2, META3,
+        FDD, QTY, COGS
+    FROM SNITCH_DB.MAPLEMONK.PRODUCTION_PIPELINE_DATA_V2
+    WHERE L1_CATEGORY IS NOT NULL AND CATEGORY IS NOT NULL
+"""
+
+
+def fetch_inventory_from_snowflake():
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print("Fetching Inventory from INV_FOR_AUTO (replaces Inv Data 2 sheet)...")
+        cur.execute(INVENTORY_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+
+    inventory = []
+    for row in rows:
+        (inv_date, l1, cat, m1, m2, m3, mp_qty, online_qty, offline_qty, total_qty,
+         mp_val, online_val, offline_val, total_val) = row
+        d = inv_date.strftime("%Y-%m-%d") if hasattr(inv_date, "strftime") else str(inv_date)[:10]
+        inventory.append({
+            "date": d, "l1": l1, "cat": cat, "m1": m1, "m2": m2, "m3": m3,
+            "mp_qty": mp_qty or 0, "online_qty": online_qty or 0, "offline_qty": offline_qty or 0,
+            "total_qty": total_qty or 0,
+            "mp_value": mp_val or 0, "online_value": online_val or 0, "offline_value": offline_val or 0,
+            "total_value": total_val or 0
+        })
+    print(f"  -> {len(inventory)} inventory rows from Snowflake")
+    return inventory
+
+
+def fetch_pipeline_from_snowflake():
+    conn = _snowflake_connect()
+    try:
+        cur = conn.cursor()
+        print("Fetching Pipeline (leaf-grain, for Inwards) from PRODUCTION_PIPELINE_DATA_V2 "
+              "(replaces Pipeline sheet)...")
+        cur.execute(PIPELINE_QUERY)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+
+    pipeline = []
+    for row in rows:
+        l1, cat, m1, m2, m3, fdd, qty, cogs = row
+        qty = float(qty) if qty is not None else 0  # Snowflake NUMBER columns come back as Decimal, not JSON-serializable
+        cogs = float(cogs) if cogs is not None else 0
+        pipeline.append({
+            "l1": l1, "cat": cat, "m1": m1, "m2": m2, "m3": m3,
+            "fdd_month": month_key(fdd),  # None if undated or a pre-2020 placeholder date
+            "qty": qty,
+            "cogs_value": cogs,  # see PIPELINE_QUERY note above re: per-unit vs total
+        })
+    print(f"  -> {len(pipeline)} pipeline rows from Snowflake")
+    return pipeline
+
+
 # ---------------------------------------------------------------------------
 # Snowflake: LIFETIME per-SKU inwards from actual warehouse putaway events
 # (not the planning-stage Pipeline sheet). Deliberately NOT bounded by
@@ -3282,11 +3371,15 @@ def _round_floats(obj, ndigits=2):
     return obj
 
 
-def build(xlsx_path_or_workbook):
-    if isinstance(xlsx_path_or_workbook, str):
-        wb = openpyxl.load_workbook(xlsx_path_or_workbook, data_only=True)
-    else:
-        wb = xlsx_path_or_workbook  # already a loaded workbook (or SimpleWorkbook from the API path)
+def build():
+    # NOTE: previously took an xlsx_path_or_workbook argument (a Google Sheets
+    # workbook, fetched via the Sheets API or a local Automation_Data.xlsx
+    # export) for the Inv Data 2 and Pipeline tabs. Both are now sourced
+    # directly from Snowflake (see fetch_inventory_from_snowflake and
+    # fetch_pipeline_from_snowflake above) -- the n8n job that kept those
+    # sheets' IMPORTRANGE formulas resolved had become unreliable and was
+    # silently producing empty inventory data. Google Sheets is no longer
+    # part of this pipeline at all; service_account.json is no longer needed.
 
     # ---- Sales (now from Snowflake, daily grain -- see fetch_sales_from_snowflake) ----
     sales = fetch_sales_from_snowflake()
@@ -3347,51 +3440,13 @@ def build(xlsx_path_or_workbook):
           f"l30d_returns_by_sku:{_d14} sales_by_sku_quarterly:{_d15} pipeline_by_sku:{_d15b} "
           f"f30d_sales_by_sku:{_d16} f30d_closing_inv_by_sku:{_d17}")
 
-    # ---- Inventory ----
-    # Kept at DAILY grain (not summed to month) because Closing(month) = the
-    # latest dated snapshot within that month, per leaf combo -- summing days
-    # together would wildly overstate stock. The frontend does the "latest
-    # snapshot in month" pick, exactly matching the Overall tab's
-    # SUMIFS(...,'CI v2'!date, MAXIFS(...)) formula.
-    ws = wb["Inv Data 2"]
-    inventory = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if row[0] is None:
-            continue
-        inv_date, l1, cat, m1, m2, m3, mp_qty, online_qty, offline_qty, total_qty, mp_val, online_val, offline_val, total_val = row[:14]
-        if l1 is None or cat is None:
-            # stray/blank rows found in the source sheet (no L1 or Category) -- not real
-            # inventory, skip so they don't pollute L1/Category rollups.
-            continue
-        d = inv_date.strftime("%Y-%m-%d") if hasattr(inv_date, "strftime") else str(inv_date)[:10]
-        inventory.append({
-            "date": d, "l1": l1, "cat": cat, "m1": m1, "m2": m2, "m3": m3,
-            "mp_qty": mp_qty or 0, "online_qty": online_qty or 0, "offline_qty": offline_qty or 0,
-            "total_qty": total_qty or 0,
-            "mp_value": mp_val or 0, "online_value": online_val or 0, "offline_value": offline_val or 0,
-            "total_value": total_val or 0
-        })
+    # ---- Inventory (now from Snowflake -- replaces the old Inv Data 2 sheet,
+    #      which depended on an unreliable n8n job to keep IMPORTRANGE fresh) ----
+    inventory = fetch_inventory_from_snowflake()
 
-    # ---- Pipeline (for Inwards) ----
-    # Matched at the same leaf grain as inventory (L1+Cat+Meta1+Meta2+Meta3), keyed
-    # by FDD_MONTH -- the month a batch is expected to land. No STATUS filter,
-    # matching the original Overall-tab formula exactly.
-    ws = wb["Pipeline"]
-    pipeline = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if row[0] is None:
-            continue
-        l1, cat, m1, m2, m3 = row[9], row[10], row[11], row[12], row[13]
-        fdd_month, qty, cogs_unit = row[21], row[22], row[23]
-        if l1 is None or cat is None:
-            continue
-        qty = qty or 0
-        pipeline.append({
-            "l1": l1, "cat": cat, "m1": m1, "m2": m2, "m3": m3,
-            "fdd_month": month_key(fdd_month),  # None if undated
-            "qty": qty,
-            "cogs_value": qty * (cogs_unit or 0)
-        })
+    # ---- Pipeline, leaf-grain, for Inwards (now from Snowflake -- replaces
+    #      the old Pipeline sheet, same reason as above) ----
+    pipeline = fetch_pipeline_from_snowflake()
 
     targets = build_targets(returns_actual)
     returns = build_returns()
@@ -3407,6 +3462,65 @@ def build(xlsx_path_or_workbook):
     data_dir = os.path.dirname(OUT)
     os.makedirs(data_dir, exist_ok=True)
 
+    def _half_key(month_str):
+        """'2026-08' -> '2026H2', '2025-03' -> '2025H1'. Used to split the
+        large sales_by_sku dataset into half-year files instead of one
+        ever-larger rolling-window blob (see split_sales_by_sku below)."""
+        year, mon = month_str.split("-")
+        half = "H1" if int(mon) <= 6 else "H2"
+        return f"{year}{half}"
+
+    def split_sales_by_sku_into_half_year_files(sales_by_sku, returns_by_sku, data_dir):
+        """Splits sales_by_sku.json into one file per half-year
+        (sales_by_sku_2025H2.json, sales_by_sku_2026H1.json, ...) instead of
+        one combined file, to stay well under GitHub's 100MB hard file-size
+        limit as the rolling window's absolute byte size grows over time.
+
+        IMPORTANT correctness note: this does NOT change what data exists --
+        every half-year touched by ROLLING_CUTOFF_DATE..today gets its own
+        file, together covering the exact same full rolling window as
+        before. The frontend must load ALL of these half-year files (not
+        just ones matching a visible date-range picker) whenever it needs
+        full-window logic like buildLiveStartMonthMap() or
+        repeatEvalSkuMeta() -- see index.html's ensureSalesBySkuLoaded().
+
+        Also deletes any stale sales_by_sku_*.json files from previous runs
+        that no longer fall inside the current rolling window, so the data/
+        folder doesn't accumulate old half-year files forever.
+        """
+        by_half = {}
+        for row in sales_by_sku:
+            by_half.setdefault(_half_key(row["month"]), {"sales_by_sku": [], "returns_by_sku": []})["sales_by_sku"].append(row)
+        for row in returns_by_sku:
+            by_half.setdefault(_half_key(row["month"]), {"sales_by_sku": [], "returns_by_sku": []})["returns_by_sku"].append(row)
+
+        written_halves = []
+        for half_key, payload in sorted(by_half.items()):
+            filename = f"sales_by_sku_{half_key}.json"
+            path = os.path.join(data_dir, filename)
+            payload = _round_floats(payload, ndigits=2)
+            with open(path, "w") as f:
+                json.dump(payload, f, separators=(",", ":"))
+            size_mb = os.path.getsize(path) / (1024 * 1024)
+            written_halves.append((filename, size_mb))
+
+        # Manifest tells the frontend exactly which half-year files exist right
+        # now, so it never has to guess filenames or silently 404.
+        manifest_path = os.path.join(data_dir, "sales_by_sku_manifest.json")
+        with open(manifest_path, "w") as f:
+            json.dump({"files": [fn for fn, _ in written_halves]}, f, separators=(",", ":"))
+
+        # Clean up stale half-year files from before (e.g. if the rolling
+        # window has moved on and an old half is no longer covered at all).
+        current_filenames = {fn for fn, _ in written_halves}
+        for existing in os.listdir(data_dir):
+            if existing.startswith("sales_by_sku_") and existing.endswith(".json") \
+               and existing != "sales_by_sku_manifest.json" and existing not in current_filenames:
+                os.remove(os.path.join(data_dir, existing))
+                print(f"  removed stale {existing} (no longer in rolling window)")
+
+        return written_halves
+
     # Split across multiple files instead of one giant data.json:
     #   1. GitHub hard-blocks any single file over 100MB -- one big file was
     #      already past that (225MB+) and would fail to push outright.
@@ -3419,7 +3533,9 @@ def build(xlsx_path_or_workbook):
             "images": images,
         },
         "sales.json": {"sales": sales},
-        "sales_by_sku.json": {"sales_by_sku": sales_by_sku, "returns_by_sku": returns_by_sku},
+        # NOTE: sales_by_sku + returns_by_sku are no longer written as one
+        # combined sales_by_sku.json -- see split_sales_by_sku_into_half_year_files()
+        # call below, right after this `parts` dict is written out.
         "sku_meta.json": {
             "inwards_by_sku": inwards_by_sku,
             "store_inv_by_sku": store_inv_by_sku,
@@ -3463,6 +3579,11 @@ def build(xlsx_path_or_workbook):
         size_mb = os.path.getsize(path) / (1024*1024)
         written.append((filename, size_mb))
 
+    # sales_by_sku is written separately, split into half-year files (see
+    # split_sales_by_sku_into_half_year_files above) instead of one combined
+    # sales_by_sku.json, to stay well under GitHub's 100MB file-size limit.
+    written.extend(split_sales_by_sku_into_half_year_files(sales_by_sku, returns_by_sku, data_dir))
+
     print(f"sales rows: {len(sales)}, sales_by_sku rows: {len(sales_by_sku)}, returns_by_sku rows: {len(returns_by_sku)}, "
           f"inwards_by_sku rows: {len(inwards_by_sku)}, store_inv_by_sku rows: {len(store_inv_by_sku)}, "
           f"pipeline_by_sku rows: {len(pipeline_by_sku)}, "
@@ -3494,14 +3615,4 @@ def build(xlsx_path_or_workbook):
 
 
 if __name__ == "__main__":
-    if "--local" in sys.argv:
-        if not os.path.exists(LOCAL_XLSX):
-            print(f"ERROR: {LOCAL_XLSX} not found.")
-            sys.exit(1)
-        build(LOCAL_XLSX)
-    elif "--export-url" in sys.argv:
-        download_from_gsheet(SHEET_ID, LOCAL_XLSX)
-        build(LOCAL_XLSX)
-    else:
-        wb = fetch_via_sheets_api(SHEET_ID)
-        build(wb)
+    build()
