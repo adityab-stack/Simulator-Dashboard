@@ -180,4 +180,8 @@ aimed at reducing how often this happens — see Known Issues / open work below.
   belt-and-suspenders.
 - **Target Attainment** is restricted to the Aug–Dec window only.
 - **Fresh SKU Reorder tab was removed** per explicit request — don't re-add
+<<<<<<< HEAD
   without asking.
+=======
+  without asking.
+>>>>>>> aditya-targetv3

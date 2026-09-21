@@ -319,11 +319,93 @@ function currentMonthKey(){
 }
 
 const DATA_PARTS = [
-  'data/meta.json', 'data/sales.json', 'data/sales_by_sku.json', 'data/sku_meta.json',
+  'data/meta.json', 'data/sales.json', 'data/sku_meta.json',
   'data/inventory.json', 'data/pipeline.json', 'data/returns_actual.json', 'data/targets.json',
   'data/livesku.json', 'data/clicks.json', 'data/repeat_eval.json',
   'data/storecutsize.json', 'data/salesvsinwards.json', 'data/storereturns.json'
 ];
+
+// --- sales_by_sku: shared cross-tab singleton, loaded from half-year files ---
+// sales_by_sku is split into multiple data/sales_by_sku_<YEAR>H1/H2.json files
+// (see build_data.py's split_sales_by_sku_into_half_year_files) instead of one
+// combined file, to stay under GitHub's 100MB file-size limit.
+//
+// CORRECTNESS CONSTRAINT: this MUST load every half-year file the backend
+// wrote (via the manifest below), covering the FULL rolling window -- not
+// just whichever half-year overlaps a visible date-range picker. Functions
+// like buildLiveStartMonthMap() and repeatEvalSkuMeta() need each SKU's
+// earliest-known month and most-recent data across the entire window;
+// scoping this fetch to a picker's visible range would silently break ROS
+// and live-start logic for SKUs whose relevant month falls outside the
+// currently-selected range. Pareto/Quartile's OWN date-range pickers still
+// filter which of these already-loaded rows they display -- that filtering
+// happens client-side after this full load, exactly as before.
+//
+// Loaded lazily (only once something actually needs it), cached after first
+// load, and shared across every consumer (Pareto, Quartile, Repeat
+// Evaluation, Category Summary) so it's fetched at most once per page visit.
+let _salesBySkuLoadPromise = null;
+function ensureSalesBySkuLoaded() {
+  if (_salesBySkuLoadPromise) return _salesBySkuLoadPromise;
+  _salesBySkuLoadPromise = fetch('data/sales_by_sku_manifest.json')
+    .then(r => {
+      if (!r.ok) throw new Error(`Failed to load sales_by_sku_manifest.json: ${r.status}`);
+      return r.json();
+    })
+    .then(manifest => {
+      const files = (manifest && manifest.files) || [];
+      if (!files.length) {
+        console.warn('sales_by_sku_manifest.json listed no files -- sales_by_sku data will be empty.');
+        return { sales_by_sku: [], returns_by_sku: [] };
+      }
+      return Promise.all(files.map(fn => {
+        const url = 'data/' + fn;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s per-file timeout
+        return fetch(url, { signal: controller.signal })
+          .then(r => {
+            clearTimeout(timeoutId);
+            if (!r.ok) throw new Error(`Failed to load ${url}: ${r.status}`);
+            return r.json();
+          })
+          .catch(err => {
+            clearTimeout(timeoutId);
+            console.error(`sales_by_sku half-year file failed to load: ${url}`, err);
+            return { sales_by_sku: [], returns_by_sku: [] }; // degrade gracefully, don't block the whole dashboard
+          });
+      }));
+    })
+    .then(parts => {
+      const merged = { sales_by_sku: [], returns_by_sku: [] };
+      for (const p of parts) {
+        if (p.sales_by_sku) merged.sales_by_sku.push(...p.sales_by_sku);
+        if (p.returns_by_sku) merged.returns_by_sku.push(...p.returns_by_sku);
+      }
+      DATA.sales_by_sku = merged.sales_by_sku;
+      DATA.returns_by_sku = merged.returns_by_sku;
+      scrubInvalidSkuGroups(DATA); // same belt-and-suspenders SKU_Group filter applied to the rest of DATA
+      buildIndexes(); // rebuild any sales_by_sku-derived indexes now that the data exists
+      _salesBySkuReady = true;
+      // If the user is already sitting on a tab that needs this, re-render
+      // now that real data has arrived (it may have shown a loading state).
+      if (['pareto', 'quartile', 'repeateval'].includes(currentPage)) {
+        render();
+      }
+      return DATA;
+    });
+  return _salesBySkuLoadPromise;
+}
+let _salesBySkuReady = false;
+// Pre-fetch after initial page load (not blocking first render), since
+// Pareto/Quartile/Repeat Evaluation/Category Summary all need this and the
+// user will likely hit one of them soon after landing.
+function prefetchSalesBySkuWhenIdle() {
+  if ('requestIdleCallback' in window) {
+    requestIdleCallback(() => ensureSalesBySkuLoaded());
+  } else {
+    setTimeout(() => ensureSalesBySkuLoaded(), 300);
+  }
+}
 
 Promise.all(DATA_PARTS.map(url => fetch(url).then(r => {
   if (!r.ok) throw new Error(`Failed to load ${url}: ${r.status}`);
@@ -331,6 +413,8 @@ Promise.all(DATA_PARTS.map(url => fetch(url).then(r => {
 })))
 .then(parts => {
   DATA = Object.assign({}, ...parts); // merge all parts into one object, same shape as the old single data.json
+  DATA.sales_by_sku = DATA.sales_by_sku || []; // populated shortly by ensureSalesBySkuLoaded()
+  DATA.returns_by_sku = DATA.returns_by_sku || [];
   scrubInvalidSkuGroups(DATA);
   document.getElementById('stamp').innerHTML = 'Data as of <b>' + new Date(DATA.generated_at).toLocaleString() + '</b>';
   buildLearnedReturns();
@@ -342,6 +426,7 @@ Promise.all(DATA_PARTS.map(url => fetch(url).then(r => {
   DATA.min_criteria = minCriteria || {}; // may be {} if the file doesn't exist yet -- Fresh SKU tab handles that gracefully
   populateFilters();
   render();
+  prefetchSalesBySkuWhenIdle();
 })
 .catch(err => {
   console.error('Failed to load dashboard data:', err);
@@ -759,6 +844,13 @@ function render(){
   }
   if (currentPage === 'ageing'){
     renderAgeingTab(f);
+    return;
+  }
+  const NEEDS_SALES_BY_SKU = ['pareto', 'quartile', 'repeateval'];
+  if (NEEDS_SALES_BY_SKU.includes(currentPage) && !_salesBySkuReady) {
+    const container = document.getElementById('page-' + currentPage);
+    if (container) container.innerHTML = '<div class="loading-msg">Loading SKU-level data…</div>';
+    ensureSalesBySkuLoaded(); // triggers render() again on completion (see its .then above)
     return;
   }
   if (currentPage === 'repeateval'){
